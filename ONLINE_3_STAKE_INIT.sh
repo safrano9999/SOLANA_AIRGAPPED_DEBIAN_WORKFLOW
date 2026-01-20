@@ -7,7 +7,7 @@ set -e
 
 # Logic for additional accounts
 EXTRA_FLAG=0
-if [[ "$*" == *"--weiterer-stake-account"* ]]; then
+if [[ "$*" == *"--add-stake"* ]]; then
     EXTRA_FLAG=1
     TIMESTAMP=$(date +%s)
 fi

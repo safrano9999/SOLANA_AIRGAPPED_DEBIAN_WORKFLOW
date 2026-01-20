@@ -34,13 +34,37 @@ The system operates on the fundamental principle of **Physical Air-Gap Isolation
 
 | Script Name | Execution Environment | Functional Description |
 | --- | --- | --- |
-| `AIRGAP_1_INIT.sh` | **Offline** | Generates cryptographic keypairs and displays public key via QR code |
-| `ONLINE_1_INIT.sh` | **Online** | Provisions on-chain nonce accounts for durable transaction signing |
-| `ONLINE_2_TX.sh` | **Online** | Transaction construction interface for SOL and SPL token operations |
-| `AIRGAP_2_SIGN_TX.sh` | **Offline** | Cryptographic signing module for SOL and SPL token transactions |
-| `ONLINE_3_INIT_STAKE.sh` | **Online** | Initializes and funds stake account structures on-chain |
+| `AIRGAP_1_KEYPAIRS_INIT.sh` | **Offline** | Generates cryptographic keypairs and displays public key via QR code |
+| `ONLINE_1_KEYPAIRS_INIT.sh` | **Online** | Provisions on-chain nonce accounts for durable transaction signing |
+| `ONLINE_2_TRANSACTIONS.sh` | **Online** | Transaction construction interface for SOL and SPL token operations |
+| `AIRGAP_2_TRANSACTIONS_SIGN.sh` | **Offline** | Cryptographic signing module for SOL and SPL token transactions |
+| `ONLINE_3_STAKE_INIT.sh` | **Online** | Initializes and funds stake account structures on-chain |
 | `ONLINE_4_STAKE.sh` | **Online** | Comprehensive staking management interface (delegation, deactivation, withdrawal, consolidation) |
-| `AIRGAP_3_SIGN.sh` | **Offline** | Core signing logic for staking-related operations |
+| `AIRGAP_3_STAKE_SIGN.sh` | **Offline** | Core signing logic for staking-related operations |
+
+---
+
+## 📁 The `./solana/` Directory
+
+Both machines maintain a `./solana/` directory for keypairs and metadata, created automatically by initialization scripts:
+
+**Air-Gapped Machine:**
+- **Keypair files:** `PUBKEY.json` format (e.g., `7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU.json`)
+- **addresses.json:** Tracks vote accounts and stake accounts associated with each keypair
+
+**Online Machine:**
+- **Nonce account files:** `PUBKEY-nonce-NETWORK.json` (e.g., `7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU-nonce-devnet.json`)
+- **Stake account files:** `PUBKEY-stake-NETWORK.json` (e.g., `2t39hwDJfRP1atSX6oSuFV4cQwcdAa52fhKssGRWGHFE-stake-devnet.json`)
+- **addresses.json:** Tracks vote accounts and stake accounts associated with each keypair
+
+**Filename Syntax:**
+- Air-Gapped keypairs: `PUBKEY.json`
+- Online nonce accounts: `PUBKEY-nonce-NETWORK.json`
+- Online stake accounts: `PUBKEY-stake-NETWORK.json`
+
+**Manual Keypair Import:** You can copy existing keypairs to `./solana/` on the air-gapped machine. The filename **must** match the format `PUBKEY.json` where `PUBKEY` is the Base58-encoded public key. Extract your public key with: `solana-keygen pubkey /path/to/keypair.json`
+
+**Security:** The directory is excluded from git via `.gitignore`. Never transfer the air-gapped `./solana/` directory to the online machine.
 
 ---
 
@@ -48,8 +72,8 @@ The system operates on the fundamental principle of **Physical Air-Gap Isolation
 
 Prior to executing any blockchain transactions, the offline identity must be registered with the Solana network:
 
-1. **Offline Workstation:** Execute `./AIRGAP_1_INIT.sh` to generate your primary wallet infrastructure. Securely document the seed phrase using offline storage methods. The script will display a QR code encoding your **public key**.
-2. **Online Workstation:** Execute `./ONLINE_1_INIT.sh`. When prompted, scan the public key QR code from the air-gapped device (alternatively, the key may be entered as plaintext for verification).
+1. **Offline Workstation:** Execute `./AIRGAP_1_KEYPAIRS_INIT.sh` to generate your primary wallet infrastructure. Securely document the seed phrase using offline storage methods. The script will display a QR code encoding your **public key**.
+2. **Online Workstation:** Execute `./ONLINE_1_KEYPAIRS_INIT.sh`. When prompted, scan the public key QR code from the air-gapped device (alternatively, the key may be entered as plaintext for verification).
 3. **Online Workstation:** The initialization script provisions a **durable nonce account**. This cryptographic construct enables offline transaction signing without the typical 60-second expiration constraint imposed by recent blockhashes.
 
 ---
@@ -58,8 +82,8 @@ Prior to executing any blockchain transactions, the offline identity must be reg
 
 This workflow facilitates the transfer of native SOL or SPL tokens (e.g., USDC, BONK) while maintaining air-gap security:
 
-1. **Transaction Preparation (Online):** Execute `./ONLINE_2_TX.sh` and select the appropriate asset type (SOL or SPL token). For token transfers, provide the token mint address. The script automatically derives the **Associated Token Account (ATA)** and generates a "Transaction Proposal" QR code containing the unsigned transaction data.
-2. **Cryptographic Signing (Offline):** Execute `./AIRGAP_2_SIGN_TX.sh` and scan the transaction proposal QR code. The script accesses the locally stored keypair, performs cryptographic signing, and generates a "Signed Transaction" QR code.
+1. **Transaction Preparation (Online):** Execute `./ONLINE_2_TRANSACTIONS.sh` and select the appropriate asset type (SOL or SPL token). For token transfers, provide the token mint address. The script automatically derives the **Associated Token Account (ATA)** and generates a "Transaction Proposal" QR code containing the unsigned transaction data.
+2. **Cryptographic Signing (Offline):** Execute `./AIRGAP_2_TRANSACTIONS_SIGN.sh` and scan the transaction proposal QR code. The script accesses the locally stored keypair, performs cryptographic signing, and generates a "Signed Transaction" QR code.
 3. **Network Broadcast (Online):** Scan the signed transaction QR code back into the online terminal. The script then broadcasts the fully signed transaction to the Solana network for processing.
 
 ---
@@ -68,11 +92,11 @@ This workflow facilitates the transfer of native SOL or SPL tokens (e.g., USDC, 
 
 Once your air-gapped wallet contains SOL, you may proceed with staking operations:
 
-1. **Stake Account Initialization (Online):** Execute `./ONLINE_3_INIT_STAKE.sh`. This provisions the necessary stake account data structure on-chain, with rent-exemption fees paid from your online hot wallet.
+1. **Stake Account Initialization (Online):** Execute `./ONLINE_3_STAKE_INIT.sh`. This provisions the necessary stake account data structure on-chain, with rent-exemption fees paid from your online hot wallet.
 2. **Stake Account Funding (Online/Offline):** Utilize the standard transaction workflow (Phase 2) to transfer SOL from your air-gapped wallet to the newly created stake account.
 3. **Validator Delegation (Online):** Execute `./ONLINE_4_STAKE.sh` and select the **Delegate** operation. Choose your preferred validator and scan the generated QR code.
-4. **Delegation Authorization (Offline):** Execute `./AIRGAP_3_SIGN.sh` to cryptographically authorize the delegation operation.
-5. **Stake Consolidation (Advanced):** Once multiple active stake accounts exist, utilize the **Merge** function within `ONLINE_4_STAKE.sh` to consolidate them into a single account without interrupting reward accumulation.
+4. **Delegation Authorization (Offline):** Execute `./AIRGAP_3_STAKE_SIGN.sh` to cryptographically authorize the delegation operation.
+5. **Stake Consolidation (Advanced):** Once multiple active stake accounts exist, utilize the **Merge** function within `ONLINE_4_STAKE.sh` to consolidate them into a single account without interrupting reward accumulation. Add a second stake account with `./ONLINE_3_STAKE_INIT.sh --add-stake` to a wallet.
 
 ---
 
@@ -86,10 +110,10 @@ Once your air-gapped wallet contains SOL, you may proceed with staking operation
 
 | Operation / Script | Transaction Fee Payer | Account Rent Payer | Funding Source |
 |--------------------|-----------------|----------------------|----------------|
-| ONLINE_1_INIT.sh (Nonce Account Creation) | Online Wallet (id.json) | Online Wallet (id.json) | ~/.config/solana/id.json |
-| ONLINE_3_INIT_STAKE.sh (Stake Account) | Online Wallet (id.json) | Online Wallet (id.json) | ~/.config/solana/id.json |
-| ONLINE_2_TX.sh (Asset Transfer) | Air-Gapped Wallet | N/A | Private Key (Air-Gapped) |
-| AIRGAP_3_SIGN.sh (Staking Operations) | Air-Gapped Wallet | N/A | Private Key (Air-Gapped) |
+| ONLINE_1_KEYPAIRS_INIT.sh (Nonce Account Creation) | Online Wallet (id.json) | Online Wallet (id.json) | ~/.config/solana/id.json |
+| ONLINE_3_STAKE_INIT.sh (Stake Account) | Online Wallet (id.json) | Online Wallet (id.json) | ~/.config/solana/id.json |
+| ONLINE_2_TRANSACTIONS.sh (Asset Transfer) | Air-Gapped Wallet | N/A | Private Key (Air-Gapped) |
+| AIRGAP_3_STAKE_SIGN.sh (Staking Operations) | Air-Gapped Wallet | N/A | Private Key (Air-Gapped) |
 
 ## ⚠️ Operational Security Protocol for True Air-Gap Implementation
 
