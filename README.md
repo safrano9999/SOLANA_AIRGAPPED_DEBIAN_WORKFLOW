@@ -93,7 +93,7 @@ This workflow facilitates the transfer of native SOL or SPL tokens (e.g., USDC, 
 Once your air-gapped wallet contains SOL, you may proceed with staking operations:
 
 1. **Stake Account Initialization (Online):** Execute `./ONLINE_3_STAKE_INIT.sh`. This provisions the necessary stake account data structure on-chain, with rent-exemption fees paid from your online hot wallet.
-2. **Stake Account Funding (Online/Offline):** Utilize the standard transaction workflow (Phase 2) to transfer SOL from your air-gapped wallet to the newly created stake account.
+2. **Stake Account Funding (Online/Offline):** Execute `./ONLINE_4_STAKE.sh` and select option **[0] Fund stake account**. This generates a QR code for transferring SOL from your air-gapped wallet to the stake account, which you then sign with `./AIRGAP_3_STAKE_SIGN.sh`.
 3. **Validator Delegation (Online):** Execute `./ONLINE_4_STAKE.sh` and select the **Delegate** operation. Choose your preferred validator and scan the generated QR code.
 4. **Delegation Authorization (Offline):** Execute `./AIRGAP_3_STAKE_SIGN.sh` to cryptographically authorize the delegation operation.
 5. **Stake Consolidation (Advanced):** Once multiple active stake accounts exist, utilize the **Merge** function within `ONLINE_4_STAKE.sh` to consolidate them into a single account without interrupting reward accumulation. Add a second stake account with `./ONLINE_3_STAKE_INIT.sh --add-stake` to a wallet.
