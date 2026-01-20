@@ -1,7 +1,7 @@
 # Solana Air-Gapped Debian Workflow with QR Code Authentication
 
 ![Example Image](example.png)
-Within milliseconds of the QR code being brought into proximity, the cryptographic signature is transmitted from the air-gapped machine to the online workstation, whereupon the transaction is broadcast to the network. (This occurs after the air-gapped machine has successfully scanned the QR code displayed on the left side of this screenshot.)
+This screenshot captures the signing process: The air-gapped machine has already received the transaction data, created the cryptographic signature, and generated a QR code. This QR code is about to be scanned by the online machine, which will immediately broadcast the signed transaction to the network.
 
 This project presents a secure, **Bash-based operational framework** for managing Solana digital assets and staking operations through a dual-machine architecture. Private cryptographic keys remain exclusively within the offline environment, with inter-machine communication facilitated entirely through QR code transmission.
 
