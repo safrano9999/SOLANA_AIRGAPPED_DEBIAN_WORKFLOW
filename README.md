@@ -120,7 +120,7 @@ Once your air-gapped wallet contains SOL, you may proceed with staking operation
 * **Maintain physical custody of seed phrases (with passphrases) using offline storage methods exclusively.**
 * **Install Debian Forky on the designated air-gapped device and deploy this script suite. Configure webcam functionality by installing requisite drivers. This network-dependent configuration phase must be completed prior to keypair generation.**
 * **Physically remove wireless network hardware (WiFi/Bluetooth modules) from the air-gapped workstation by disassembling the device and extracting the relevant components.**
-* **Permanently disable all network connectivity: never connect Ethernet cables, disable USB ports via BIOS configuration, and ensure the device never establishes network connectivity again.**
+* **Permanently disable all network connectivity: never connect Ethernet cables, disable USB ports (only if camera still works for QR-scanning) via BIOS configuration, and ensure the device never establishes network connectivity again.**
 * **Implement passphrase-protected seed phrases for enhanced cryptographic security.**
 
 ## 💸 Testnet Faucet Resources for Development
