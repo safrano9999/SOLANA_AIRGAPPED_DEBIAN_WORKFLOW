@@ -1,0 +1,15 @@
+version: "3.9"
+services:
+  solana-airgap:
+    image: solana-airgap:latest
+    container_name: solana-airgap
+    restart: unless-stopped
+    network_mode: "none"
+    devices:
+      - /dev/video0:/dev/video0
+    group_add:
+      - video
+    volumes:
+      - ${HOME}/SOLANA_AIRGAPPED_DEBIAN_WORKFLOW/airgap:/app
+      - ${HOME}/SOLANA_AIRGAPPED_DEBIAN_WORKFLOW/solana:/app/solana
+    command: ["sleep", "infinity"]

@@ -1,0 +1,15 @@
+version: "3.9"
+services:
+  solana-online:
+    image: solana-online:latest
+    container_name: solana-online
+    restart: unless-stopped
+    devices:
+      - /dev/video0:/dev/video0
+    group_add:
+      - video
+    volumes:
+      - ${HOME}/SOLANA_AIRGAPPED_DEBIAN_WORKFLOW/online:/app
+      - ${HOME}/SOLANA_AIRGAPPED_DEBIAN_WORKFLOW/solana:/app/solana
+      - ${HOME}/.config/solana:/root/.config/solana
+    command: ["sleep", "infinity"]

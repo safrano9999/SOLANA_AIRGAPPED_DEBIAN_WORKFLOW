@@ -1,0 +1,32 @@
+[Unit]
+Description=Solana CLI (latest, idle)
+
+[Container]
+Image=docker.io/solanalabs/solana:stable
+# Wichtig für Airgap: Nicht jedes Mal versuchen zu ziehen
+#Internal=true nur für airgapped
+#Pull=never nur für airgapped
+ContainerName=solana-cli
+Entrypoint=/usr/bin/tail
+Exec=-f /dev/null
+
+#Für das Onlinegerät bitte diese Zeile nutzen anstelle der oberen: es werden die Zertifikate geladen für die Handshakes bei den TX.
+#Exec=-c "if [ ! -f /etc/ssl/certs/ca-certificates.crt ]; then apt-get update && apt-get install -y ca-certificates; fi; exec /usr/bin/tail -f /dev/null"
+
+
+#8008 nicht benötigt, muss nur lauschen wenn validator-node, hier im airgap workflow nicht benötigt
+#PublishPort=8080:8080
+# Mount mit :Z für korrekte Berechtigungen
+Volume=/home/rafael/SOLANA_AIRGAPPED_DEBIAN_WORKFLOW:/app:Z
+Volume=${HOME}/.config/solana:/root/.config/solana
+Volume=solana-certs:/etc/ssl/certs
+
+
+###next 3 lines are important for security
+ReadOnly=true
+Tmpfs=/tmp
+Tmpfs=/var/tmp
+
+
+[Install]
+WantedBy=default.target

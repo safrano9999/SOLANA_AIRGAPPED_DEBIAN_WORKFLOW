@@ -1,0 +1,39 @@
+[Unit]
+Description=Solana Airgap
+
+[Container]
+Image=solana-airgap
+ContainerName=solana-airgap
+
+# X11 Display Variable durchreichen
+# Falls dein lokales Display ein anderes ist, kannst du auch DISPLAY=${DISPLAY} nutzen,
+# aber :0 ist der Standard für den ersten Monitor.
+
+# X11 Socket mounten für die Grafikausgabe
+
+# Kamera einbinden
+# Gruppe für Video-Zugriff hinzufügen (entspricht --group-add video)
+
+# Mounts (Logs wurden wie gewünscht entfernt)
+Volume=%h/SOLANA_AIRGAPPED_DEBIAN_WORKFLOW/airgap:/app:Z
+Volume=%h/SOLANA_AIRGAPPED_DEBIAN_WORKFLOW/solana:/app/solana:Z
+
+# Da es ein Online-PC ist, lassen wir Network auf dem Default (zugänglich)
+# Wenn du willst, dass er stabil läuft:
+Entrypoint=/usr/bin/tail
+Exec=-f /dev/null
+
+
+### remove the four uncommentations in the lines below, to use videofeedback while scanning qr code, so zbarcam can pipe the gui-X-window on your screen
+GroupAdd=video
+AddDevice=/dev/video0
+Volume=/tmp/.X11-unix:/tmp/.X11-unix:Z
+Environment=DISPLAY=:0
+
+ReadOnly=true
+Tmpfs=/tmp
+Tmpfs=/var/tmp
+
+
+[Install]
+WantedBy=default.target
