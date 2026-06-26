@@ -197,6 +197,43 @@ run_openssl_generator() {
     return 1
 }
 
+detect_gui_env_values() {
+    local display="${DISPLAY:-}"
+    local runtime="${XDG_RUNTIME_DIR:-}"
+
+    [ -n "$display" ] || display=":0"
+    [ -n "$runtime" ] || runtime="/run/user/$(id -u 2>/dev/null || printf '0')"
+
+    printf 'DISPLAY=%s\n' "$display"
+    printf 'NO_AT_BRIDGE=1\n'
+    printf 'XDG_RUNTIME_DIR=%s\n' "$runtime"
+}
+
+write_config_value() {
+    local target="$1"
+    local key="$2"
+    local value="$3"
+
+    sed -i "/^${key}=/d" "$target" 2>/dev/null || true
+    echo "$key=$value" >> "$target"
+}
+
+write_config_value_if_missing() {
+    local target="$1"
+    local key="$2"
+    local value="$3"
+    local existing_line existing
+
+    existing_line="$(grep "^${key}=" "$target" 2>/dev/null | head -1 || true)"
+    existing="${existing_line#*=}"
+    if [ -n "$existing_line" ] && [ -n "$existing" ]; then
+        echo "    $key= exists"
+        return 0
+    fi
+    write_config_value "$target" "$key" "$value"
+    echo "    $key=$value"
+}
+
 add_unique() {
     local value="$1"
     shift
@@ -373,6 +410,7 @@ configure_from_example() {
     declare -A seen_keys=()
     declare -A blank_if_targets=()
     declare -A autofill_blank_keys=()
+    declare -A skip_existing_keys=()
     local required_next=false
     local directive condition condition_key condition_value target_key target_list
     local generator_label choice
@@ -412,6 +450,60 @@ configure_from_example() {
         done
     }
 
+    handle_display_env() {
+        local target="$1"
+        local choice read_status=0 val display_val no_at_bridge_val runtime_val line
+
+        display_val=":0"
+        no_at_bridge_val="1"
+        runtime_val="/run/user/$(id -u 2>/dev/null || printf '0')"
+
+        if [ -t 0 ]; then
+            echo "    DISPLAY:"
+            echo "      (1) autodetect GUI env"
+            echo "      (2) enter manual"
+            read -r -p "    Choose [1/2] (default: 1): " choice || read_status=$?
+            choice="${choice:-1}"
+        else
+            choice="1"
+        fi
+
+        case "$choice" in
+            1)
+                while IFS= read -r line || [ -n "$line" ]; do
+                    case "$line" in
+                        DISPLAY=*) display_val="${line#DISPLAY=}" ;;
+                        NO_AT_BRIDGE=*) no_at_bridge_val="${line#NO_AT_BRIDGE=}" ;;
+                        XDG_RUNTIME_DIR=*) runtime_val="${line#XDG_RUNTIME_DIR=}" ;;
+                    esac
+                done < <(detect_gui_env_values || true)
+                ;;
+            2)
+                if [ -t 0 ]; then
+                    read -e -i "$display_val" -r -p "    DISPLAY: " val || read_status=$?
+                    [ -n "$val" ] && display_val="$val"
+                    read -e -i "$no_at_bridge_val" -r -p "    NO_AT_BRIDGE: " val || read_status=$?
+                    [ -n "$val" ] && no_at_bridge_val="$val"
+                    read -e -i "$runtime_val" -r -p "    XDG_RUNTIME_DIR: " val || read_status=$?
+                    [ -n "$val" ] && runtime_val="$val"
+                fi
+                ;;
+            *)
+                echo "    choose 1 or 2"
+                return 1
+                ;;
+        esac
+
+        [ -n "$display_val" ] || display_val=":0"
+        [ -n "$no_at_bridge_val" ] || no_at_bridge_val="1"
+        [ -n "$runtime_val" ] || runtime_val="/tmp/runtime-root"
+
+        write_config_value_if_missing "$target" "DISPLAY" "$display_val"
+        write_config_value_if_missing "$target" "NO_AT_BRIDGE" "$no_at_bridge_val"
+        write_config_value_if_missing "$target" "XDG_RUNTIME_DIR" "$runtime_val"
+        return "$read_status"
+    }
+
     while IFS= read -r line <&3; do
         stripped="${line#"${line%%[![:space:]]*}"}"
         if [[ "$stripped" == \#required:* ]]; then
@@ -443,6 +535,10 @@ configure_from_example() {
             continue
         fi
         seen_keys[$key]=1
+
+        if [[ -n "${skip_existing_keys[$key]+x}" ]]; then
+            continue
+        fi
 
         env_existing=""
         if [ "$(basename "$target")" = "config.conf" ]; then
@@ -478,6 +574,13 @@ configure_from_example() {
             echo "$key=$env_existing" >> "$target"
             echo "    $key= migrated from .env"
             activate_blank_rules "$key" "$env_existing"
+            continue
+        fi
+
+        if [ "$key" = "DISPLAY" ]; then
+            handle_display_env "$target"
+            skip_existing_keys[NO_AT_BRIDGE]=1
+            skip_existing_keys[XDG_RUNTIME_DIR]=1
             continue
         fi
 
