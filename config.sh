@@ -411,10 +411,44 @@ configure_from_example() {
     declare -A blank_if_targets=()
     declare -A autofill_blank_keys=()
     declare -A skip_existing_keys=()
+    declare -A db_defaults=()
+    declare -A db_seen_keys=()
+    local -a db_config_keys=()
+    local -a db_backend_keys=()
     local required_next=false
     local directive condition condition_key condition_value target_key target_list
     local generator_label choice
-    local rule_key
+    local rule_key db_bulk_eligible=false db_bulk_decided=false
+
+    while IFS= read -r line <&5; do
+        stripped="${line#"${line%%[![:space:]]*}"}"
+        [[ -z "$stripped" || "$stripped" == \#* ]] && continue
+
+        entry="${line%%#*}"
+        entry="$(trim "$entry")"
+        [[ "$entry" == *=* ]] || continue
+
+        key="$(trim "${entry%%=*}")"
+        default="$(trim "${entry#*=}")"
+        [[ "$key" =~ ^[A-Za-z_][A-Za-z0-9_]*_DB_(BACKEND|HOST|URL|PORT|NAME|USER|PW|PASSWORD|PREFIX)$ ]] || continue
+
+        db_defaults[$key]="$default"
+        if [[ -z "${db_seen_keys[$key]+x}" ]]; then
+            db_seen_keys[$key]=1
+            db_config_keys+=("$key")
+            [[ "$key" == *_DB_BACKEND ]] && db_backend_keys+=("$key")
+        fi
+    done 5< "$example"
+
+    if [ "$(basename "$target")" = ".env" ] && [ "${#db_backend_keys[@]}" -gt 1 ]; then
+        db_bulk_eligible=true
+        for key in "${db_config_keys[@]}"; do
+            if grep -q "^${key}=" "$target" 2>/dev/null; then
+                db_bulk_eligible=false
+                break
+            fi
+        done
+    fi
 
     while IFS= read -r line <&4; do
         stripped="${line#"${line%%[![:space:]]*}"}"
@@ -447,6 +481,139 @@ configure_from_example() {
         for target_key in $targets; do
             [[ "$target_key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || continue
             autofill_blank_keys[$target_key]=1
+        done
+    }
+
+    normalize_db_backend() {
+        local value
+        value="$(normalize_rule_value "$1")"
+        case "$value" in
+            postgres|postgresql|pgsql|psql) printf 'postgres\n' ;;
+            mysql) printf 'mysql\n' ;;
+            mariadb) printf 'mariadb\n' ;;
+            sqlite|sqlite3) printf 'sqlite\n' ;;
+            *) printf '%s\n' "$value" ;;
+        esac
+    }
+
+    first_db_default() {
+        local suffix="$1"
+        local db_key
+
+        for db_key in "${db_config_keys[@]}"; do
+            [[ "$db_key" == *_DB_"$suffix" ]] || continue
+            if [ -n "${db_defaults[$db_key]:-}" ]; then
+                printf '%s\n' "${db_defaults[$db_key]}"
+                return 0
+            fi
+        done
+        return 1
+    }
+
+    read_bulk_db_value() {
+        local prompt="$1"
+        local preset="$2"
+        local secret="${3:-false}"
+        local input=""
+
+        while [ -z "$input" ]; do
+            if [ -t 0 ]; then
+                if [ "$secret" = "true" ]; then
+                    read -r -s -p "    $prompt: " input || true
+                    echo "" >&2
+                elif [ -n "$preset" ]; then
+                    read -e -i "$preset" -r -p "    $prompt: " input || true
+                else
+                    read -r -p "    $prompt: " input || true
+                fi
+            else
+                read -r input || true
+                [ -n "$input" ] || input="$preset"
+            fi
+            [ -n "$input" ] || echo "    $prompt required" >&2
+        done
+        printf '%s\n' "$input"
+    }
+
+    apply_bulk_db_config() {
+        local selected_backend="$1"
+        local common_host common_port common_name common_user common_pw
+        local db_key prefix suffix value default_name
+
+        selected_backend="$(normalize_db_backend "$selected_backend")"
+        if [ "$selected_backend" = "sqlite" ]; then
+            for db_key in "${db_config_keys[@]}"; do
+                if [[ "$db_key" == *_DB_BACKEND ]]; then
+                    write_config_value "$target" "$db_key" "$selected_backend"
+                else
+                    write_config_value "$target" "$db_key" "blank"
+                fi
+            done
+            echo "    ${#db_backend_keys[@]} backends configured as sqlite in ./STATE"
+            return 0
+        fi
+
+        common_host="$(first_db_default HOST || first_db_default URL || printf '127.0.0.1\n')"
+        case "$selected_backend" in
+            postgres) common_port="5432" ;;
+            mysql|mariadb) common_port="3306" ;;
+            *) common_port="$(first_db_default PORT || true)" ;;
+        esac
+        default_name="${CONTAINER_NAME//-/_}"
+
+        common_host="$(read_bulk_db_value "DB host" "$common_host")"
+        common_port="$(read_bulk_db_value "DB port" "$common_port")"
+        common_name="$(read_bulk_db_value "DB name" "$default_name")"
+        common_user="$(read_bulk_db_value "DB user" "$default_name")"
+        common_pw="$(read_bulk_db_value "DB password" "" true)"
+
+        for db_key in "${db_config_keys[@]}"; do
+            prefix="${db_key%%_DB_*}"
+            suffix="${db_key#${prefix}_DB_}"
+            case "$suffix" in
+                BACKEND) value="$selected_backend" ;;
+                HOST|URL) value="$common_host" ;;
+                PORT) value="$common_port" ;;
+                NAME) value="$common_name" ;;
+                USER) value="$common_user" ;;
+                PW|PASSWORD) value="$common_pw" ;;
+                PREFIX) value="${db_defaults[$db_key]:-${prefix,,}}" ;;
+                *) continue ;;
+            esac
+            write_config_value "$target" "$db_key" "$value"
+        done
+        echo "    ${#db_backend_keys[@]} backends configured as $selected_backend"
+    }
+
+    maybe_apply_bulk_db_config() {
+        local selected_backend="$1"
+        local bulk_choice=""
+
+        [ "$db_bulk_eligible" = "true" ] || return 1
+        [ "$db_bulk_decided" = "false" ] || return 1
+        db_bulk_decided=true
+
+        echo ""
+        echo "    ${#db_backend_keys[@]} database backends found."
+        echo "      (1) use $selected_backend for all [default]"
+        echo "      (2) configure individually"
+        while :; do
+            if [ -t 0 ]; then
+                read -r -p "    Choose [1/2] (default: 1): " bulk_choice || true
+            else
+                read -r bulk_choice || true
+            fi
+            bulk_choice="${bulk_choice:-1}"
+            case "$bulk_choice" in
+                1)
+                    apply_bulk_db_config "$selected_backend"
+                    return 0
+                    ;;
+                2)
+                    return 1
+                    ;;
+                *) echo "    choose 1 or 2" ;;
+            esac
         done
     }
 
@@ -564,7 +731,11 @@ configure_from_example() {
             continue
         fi
         if [ -n "$existing_line" ] && { [ "$required" != "true" ] || [ -n "$existing" ]; }; then
-            [ "$CONFIG_SHOW" = "--show" ] && echo "    $key=$existing" || echo "    $key= exists"
+            if [ "$(basename "$target")" = ".env" ]; then
+                echo "    $key= exists"
+            else
+                echo "    $key=$existing"
+            fi
             activate_blank_rules "$key" "$existing"
             continue
         fi
@@ -668,6 +839,9 @@ configure_from_example() {
                 echo "    $key= skipped"
                 continue
             fi
+        fi
+        if [[ "$key" == *_DB_BACKEND ]] && maybe_apply_bulk_db_config "$val"; then
+            continue
         fi
         echo "$key=$val" >> "$target"
         activate_blank_rules "$key" "$val"
