@@ -1176,10 +1176,10 @@ fi
 echo ""
 echo "  Configuring $PROJECT_NAME"
 
-configure_from_example "$DIR/env.example" "$DIR/.env" ".env"
-configure_from_example "$DIR/config.conf_example" "$DIR/config.conf" "config.conf"
+for example in "$DIR"/env*example; do configure_from_example "$example" "$DIR/.env" ".env"; done
+for example in "$DIR"/config*example; do configure_from_example "$example" "$DIR/config.conf" "config.conf"; done
 if [ "$NO_CONTAINER" != "true" ]; then
-    configure_from_example "$DIR/container.example" "$DIR/container.conf" "container.conf"
+    for example in "$DIR"/container*example "$DIR"/config*.container; do configure_from_example "$example" "$DIR/container.conf" "container.conf"; done
     generate_container_files
 fi
 
