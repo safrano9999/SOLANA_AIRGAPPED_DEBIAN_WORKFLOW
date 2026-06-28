@@ -411,12 +411,14 @@ configure_from_example() {
     declare -A blank_if_targets=()
     declare -A autofill_blank_keys=()
     declare -A skip_existing_keys=()
+    declare -A value_dupe_targets=()
     declare -A db_defaults=()
     declare -A db_seen_keys=()
     local -a db_config_keys=()
     local -a db_backend_keys=()
     local required_next=false
     local directive condition condition_key condition_value target_key target_list
+    local pending_value_dupe="" value_dupe_target value_dupe_existing value_dupe_choice
     local generator_label choice
     local rule_key db_bulk_eligible=false db_bulk_decided=false
 
@@ -439,6 +441,26 @@ configure_from_example() {
             [[ "$key" == *_DB_BACKEND ]] && db_backend_keys+=("$key")
         fi
     done 5< "$example"
+
+    while IFS= read -r line <&6; do
+        stripped="${line#"${line%%[![:space:]]*}"}"
+        if [[ "$stripped" == \#valuedupe:* ]]; then
+            pending_value_dupe="$(trim "${stripped#\#valuedupe:}")"
+            [[ "$pending_value_dupe" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || pending_value_dupe=""
+            continue
+        fi
+        [[ -z "$stripped" || "$stripped" == \#* ]] && continue
+
+        entry="${line%%#*}"
+        entry="$(trim "$entry")"
+        if [[ "$entry" == *=* && -n "$pending_value_dupe" ]]; then
+            key="$(trim "${entry%%=*}")"
+            if [[ "$key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
+                value_dupe_targets[$key]="$pending_value_dupe"
+            fi
+        fi
+        pending_value_dupe=""
+    done 6< "$example"
 
     if [ "$(basename "$target")" = ".env" ] && [ "${#db_backend_keys[@]}" -gt 1 ]; then
         db_bulk_eligible=true
@@ -482,6 +504,35 @@ configure_from_example() {
             [[ "$target_key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || continue
             autofill_blank_keys[$target_key]=1
         done
+    }
+
+    maybe_apply_value_dupe() {
+        local source_key="$1"
+        local source_value="$2"
+
+        value_dupe_target="${value_dupe_targets[$source_key]:-}"
+        [ -n "$value_dupe_target" ] || return 0
+        [ -n "$source_value" ] || return 0
+
+        value_dupe_existing="$(read_kv_file "$target" "$value_dupe_target" || true)"
+        [ -z "$value_dupe_existing" ] || return 0
+
+        value_dupe_choice="y"
+        if [ -t 0 ]; then
+            read -r -p "    Reuse $source_key value for $value_dupe_target? [Y/n]: " value_dupe_choice || true
+            value_dupe_choice="${value_dupe_choice:-y}"
+        fi
+        case "${value_dupe_choice,,}" in
+            y|yes)
+                write_config_value "$target" "$value_dupe_target" "$source_value"
+                echo "    $value_dupe_target= reused from $source_key"
+                ;;
+            n|no) ;;
+            *)
+                echo "    choose y or n" >&2
+                return 1
+                ;;
+        esac
     }
 
     normalize_db_backend() {
@@ -727,6 +778,7 @@ configure_from_example() {
             sed -i "/^${key}=/d" "$target" 2>/dev/null || true
             echo "$key=$env_existing" >> "$target"
             echo "    $key= migrated from .env"
+            maybe_apply_value_dupe "$key" "$env_existing"
             activate_blank_rules "$key" "$env_existing"
             continue
         fi
@@ -736,6 +788,7 @@ configure_from_example() {
             else
                 echo "    $key=$existing"
             fi
+            maybe_apply_value_dupe "$key" "$existing"
             activate_blank_rules "$key" "$existing"
             continue
         fi
@@ -744,6 +797,7 @@ configure_from_example() {
         if [ -n "$env_existing" ]; then
             echo "$key=$env_existing" >> "$target"
             echo "    $key= migrated from .env"
+            maybe_apply_value_dupe "$key" "$env_existing"
             activate_blank_rules "$key" "$env_existing"
             continue
         fi
@@ -844,6 +898,7 @@ configure_from_example() {
             continue
         fi
         echo "$key=$val" >> "$target"
+        maybe_apply_value_dupe "$key" "$val"
         activate_blank_rules "$key" "$val"
     done 3< "$example"
 
@@ -1176,6 +1231,7 @@ fi
 echo ""
 echo "  Configuring $PROJECT_NAME"
 
+for example in "$DIR"/*build.conf_example; do configure_from_example "$example" "$DIR/build.conf" "build.conf"; done
 for example in "$DIR"/env*example; do configure_from_example "$example" "$DIR/.env" ".env"; done
 for example in "$DIR"/config*example; do configure_from_example "$example" "$DIR/config.conf" "config.conf"; done
 if [ "$NO_CONTAINER" != "true" ]; then
