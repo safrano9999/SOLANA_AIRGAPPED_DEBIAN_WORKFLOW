@@ -89,6 +89,26 @@ if _process_env_has_fastapi_host:
     os.environ["FASTAPI_HOST"] = "0.0.0.0"
 
 
+def _ensure_local_sqlite_dir() -> None:
+    backend_pattern = re.compile(r"^\s*([A-Za-z_][A-Za-z0-9_]*_DB_BACKEND)\s*=\s*([^#]*)")
+    backends: dict[str, str] = {}
+    for example in sorted(_env_dir.glob("env*example")):
+        for line in example.read_text(encoding="utf-8").splitlines():
+            if line.lstrip().startswith("#"):
+                continue
+            match = backend_pattern.match(line)
+            if match:
+                backends.setdefault(match.group(1), _normalize_env_value(match.group(2)).strip())
+
+    for key, default in backends.items():
+        if os.environ.get(key, default).strip().lower() in {"sqlite", "sqlite3"}:
+            (_env_dir / "sqlite").mkdir(parents=True, exist_ok=True)
+            return
+
+
+_ensure_local_sqlite_dir()
+
+
 def get(key: str, default: str = "") -> str:
     """Get env var as string."""
     return os.environ.get(key, default).strip()
