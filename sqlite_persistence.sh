@@ -72,7 +72,10 @@ repo_sqlite_enabled() {
 
 zip_member() {
     local zip="$1" suffix="$2"
-    unzip -Z1 "$zip" | awk -v suffix="$suffix" '$0 == suffix || $0 ~ ("/" suffix "$") { print; exit }'
+    unzip -Z1 "$zip" | awk -v suffix="$suffix" '
+        ($0 == suffix || $0 ~ ("/" suffix "$")) && !found { print; found=1 }
+        END { exit !found }
+    '
 }
 
 zip_plugin_id() {
