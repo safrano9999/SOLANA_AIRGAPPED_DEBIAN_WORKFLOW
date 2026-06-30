@@ -25,6 +25,58 @@ read_key() {
     return 1
 }
 
+example_files() {
+    find "$1" -maxdepth 1 -type f -name '*example*' -print | LC_ALL=C sort
+}
+
+configured_value() {
+    local config_dir="$1" key="$2" file value
+    value="${!key:-}"
+    [ -n "$value" ] && { printf '%s\n' "$value"; return 0; }
+    for file in "$config_dir/config.conf" "$config_dir/container.conf" "$config_dir/.env" "$config_dir/build.conf"; do
+        value="$(read_key "$file" "$key" || true)"
+        [ -n "$value" ] && { printf '%s\n' "$value"; return 0; }
+    done
+    while IFS= read -r file; do
+        value="$(read_key "$file" "$key" || true)"
+        [ -n "$value" ] && { printf '%s\n' "$value"; return 0; }
+    done < <(example_files "$config_dir")
+}
+
+named_volume_specs() {
+    local config_dir="$1" file
+    while IFS= read -r file; do
+        awk '
+        function trim(s) { sub(/^[[:space:]]+/, "", s); sub(/[[:space:]]+$/, "", s); return s }
+        /^[[:space:]]*#named-volume:/ {
+            spec=$0
+            sub(/^[[:space:]]*#named-volume:[[:space:]]*/, "", spec)
+            spec=trim(spec)
+            next
+        }
+        spec != "" && /^[[:space:]]*[A-Za-z_][A-Za-z0-9_]*[[:space:]]*=/ {
+            key=$0
+            sub(/[[:space:]]*=.*/, "", key)
+            print trim(key) "\t" spec
+            spec=""
+        }' "$file"
+    done < <(example_files "$config_dir")
+}
+
+enabled_named_volume_specs() {
+    local config_dir="$1" key mount source target value
+    while IFS=$'\t ' read -r key mount source target; do
+        [ -n "$key" ] && [ -n "$mount" ] && [ -n "$source" ] && [ -n "$target" ] || continue
+        value="$(configured_value "$config_dir" "$key")"
+        case "${value,,}" in 1|true|yes|on) ;; *) continue ;; esac
+        valid_path "$mount" && valid_path "$source" && valid_path "$target" || {
+            echo "Invalid #named-volume for $key" >&2
+            return 1
+        }
+        printf '%s\t%s\t%s\t%s\n' "$key" "$mount" "$source" "$target"
+    done < <(named_volume_specs "$config_dir" | awk -F '\t' '!seen[$1]++')
+}
+
 path_keys() {
     local config_dir="$1" file
     for file in "$config_dir"/*build.conf_example "$config_dir/build.conf" "$config_dir/container.conf"; do
@@ -52,7 +104,7 @@ configured_path() {
 
 valid_path() {
     local path="$1"
-    [[ "$path" == /* && "$path" != *:* && "$path" != *$'\n'* && "$path" != *$'\r'* ]]
+    [[ "$path" == /* && "$path" != *:* && "$path" != *'|'* && "$path" != *';'* && "$path" != *$'\n'* && "$path" != *$'\r'* ]]
 }
 
 safe_name() {
@@ -85,6 +137,16 @@ done
 case "$command" in
     entries)
         emit_entries "$config_dir"
+        links=""
+        while IFS=$'\t ' read -r _ mount source target; do
+            valid_path "$mount" && valid_path "$source" && valid_path "$target" || {
+                echo "Invalid #named-volume specification" >&2
+                exit 1
+            }
+            spec="$mount|$source|$target"
+            links="${links:+$links;}$spec"
+        done < <(named_volume_specs "$config_dir" | awk -F '\t' '!seen[$1]++')
+        [ -z "$links" ] || printf 'NAMED_VOLUME_LINKS\t%s\n' "$links"
         ;;
     mounts)
         [ -n "$container_name" ] || { echo "mounts requires --container" >&2; exit 2; }
@@ -92,6 +154,9 @@ case "$command" in
             prefix="${key%_PERSISTENT_PATH}"
             printf '%s-%s-persistent:%s:Z\n' "$(safe_name "$container_name")" "$(safe_name "$prefix")" "$path"
         done < <(emit_entries "$config_dir")
+        while IFS=$'\t' read -r _ mount _ _; do
+            printf '%s-%s:%s:Z\n' "$(safe_name "$container_name")" "$(safe_name "${mount##*/}")" "$mount"
+        done < <(enabled_named_volume_specs "$config_dir")
         ;;
     init)
         while IFS= read -r key; do
