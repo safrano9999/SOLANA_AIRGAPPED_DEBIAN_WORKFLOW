@@ -64,7 +64,7 @@ emit_entries() {
     while IFS= read -r key || [ -n "$key" ]; do
         [ -n "$key" ] || continue
         path="$(configured_path "$config_dir" "$key")"
-        case "${path,,}" in ""|blank) continue ;; esac
+        case "${path,,}" in ""|blank|null) continue ;; esac
         valid_path "$path" || { echo "Invalid $key: $path" >&2; return 1; }
         printf '%s\t%s\n' "$key" "$path"
     done < <(path_keys "$config_dir")
@@ -97,7 +97,7 @@ case "$command" in
         while IFS= read -r key; do
             [[ "$key" == *_PERSISTENT_PATH ]] || continue
             path="${!key:-}"
-            case "${path,,}" in ""|blank) continue ;; esac
+            case "${path,,}" in ""|blank|null) continue ;; esac
             valid_path "$path" || { echo "Invalid $key: $path" >&2; exit 1; }
             mkdir -p "$path"
         done < <(compgen -e | LC_ALL=C sort -u)

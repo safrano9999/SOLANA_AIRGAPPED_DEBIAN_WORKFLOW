@@ -15,6 +15,9 @@ CONTAINER_NAME="${PROJECT_NAME,,}"
 CONFIG_SHOW=""
 NO_CONTAINER=false
 
+declare -A REPEAT_GROUP_MODES=()
+declare -A REPEAT_GROUP_INDEXES=()
+
 for arg in "$@"; do
     case "$arg" in
         --show) CONFIG_SHOW="--show" ;;
@@ -466,15 +469,104 @@ configure_from_example() {
     declare -A autofill_blank_keys=()
     declare -A skip_existing_keys=()
     declare -A value_dupe_targets=()
+    declare -A repeat_group_styles=()
+    declare -A repeat_group_fields=()
+    declare -A repeat_key_groups=()
     declare -A db_defaults=()
     declare -A db_seen_keys=()
     local -a db_config_keys=()
     local -a db_backend_keys=()
     local required_next=false
     local directive condition condition_key condition_value target_key target_list
+    local repeat_group repeat_style repeat_fields base_key repeat_choice repeat_index
     local pending_value_dupe="" value_dupe_target value_dupe_existing value_dupe_choice
     local generator_label choice
     local rule_key db_bulk_eligible=false db_bulk_decided=false
+
+    while IFS= read -r line <&7; do
+        stripped="${line#"${line%%[![:space:]]*}"}"
+        [[ "$stripped" == \#repeat-group:* ]] || continue
+        directive="$(trim "${stripped#\#repeat-group:}")"
+        read -r repeat_group repeat_style repeat_fields <<< "$directive"
+        [[ "$repeat_group" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || continue
+        [[ "$repeat_style" == "suffix" || "$repeat_style" == "infix" ]] || continue
+        [ -n "$repeat_fields" ] || continue
+        repeat_group_styles[$repeat_group]="$repeat_style"
+        for target_key in $repeat_fields; do
+            [[ "$target_key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || continue
+            repeat_key_groups[$target_key]="$repeat_group"
+            repeat_group_fields[$repeat_group]="${repeat_group_fields[$repeat_group]:-} $target_key"
+        done
+    done 7< "$example"
+
+    repeat_group_key() {
+        local group="$1"
+        local style="$2"
+        local field="$3"
+        local index="$4"
+
+        if [ "$index" -eq 1 ]; then
+            printf '%s\n' "$field"
+        elif [ "$style" = "infix" ]; then
+            printf '%s_%s_%s\n' "$group" "$index" "${field#${group}_}"
+        else
+            printf '%s_%s\n' "$field" "$index"
+        fi
+    }
+
+    prepare_repeat_group() {
+        local group="$1"
+        local style="${repeat_group_styles[$group]}"
+        local fields="${repeat_group_fields[$group]}"
+        local index field mapped value all complete=false slot_found=false next_index=1
+        local mode default_mode
+
+        [ -z "${REPEAT_GROUP_MODES[$group]+x}" ] || return 0
+
+        for ((index = 1; index <= 50; index++)); do
+            all=true
+            for field in $fields; do
+                mapped="$(repeat_group_key "$group" "$style" "$field" "$index")"
+                value="$(read_kv_file "$target" "$mapped" || true)"
+                case "${value,,}" in ""|blank|null) value="" ;; esac
+                if [ -z "$value" ]; then
+                    all=false
+                fi
+            done
+            if [ "$all" = "true" ]; then
+                complete=true
+                continue
+            fi
+            next_index="$index"
+            slot_found=true
+            break
+        done
+        if [ "$slot_found" != "true" ]; then
+            echo "    no free $group slot" >&2
+            return 1
+        fi
+
+        mode="new"
+        if [ "$complete" = "true" ]; then
+            default_mode="skip"
+            while :; do
+                if [ -t 0 ]; then
+                    read -r -p "    $group [skip/new] (default: $default_mode): " repeat_choice || true
+                else
+                    repeat_choice="$default_mode"
+                fi
+                repeat_choice="${repeat_choice:-$default_mode}"
+                case "${repeat_choice,,}" in
+                    skip|s|1) mode="skip"; break ;;
+                    new|n|2) mode="new"; break ;;
+                    *) echo "    choose skip or new" ;;
+                esac
+            done
+        fi
+
+        REPEAT_GROUP_MODES[$group]="$mode"
+        REPEAT_GROUP_INDEXES[$group]="$next_index"
+    }
 
     while IFS= read -r line <&5; do
         stripped="${line#"${line%%[![:space:]]*}"}"
@@ -802,6 +894,15 @@ configure_from_example() {
         default="${default%"${default##*[![:space:]]}"}"
 
         [[ "$key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || continue
+        base_key="$key"
+        repeat_group="${repeat_key_groups[$base_key]:-}"
+        if [ -n "$repeat_group" ]; then
+            prepare_repeat_group "$repeat_group"
+            [ "${REPEAT_GROUP_MODES[$repeat_group]}" = "new" ] || continue
+            repeat_style="${repeat_group_styles[$repeat_group]}"
+            repeat_index="${REPEAT_GROUP_INDEXES[$repeat_group]}"
+            key="$(repeat_group_key "$repeat_group" "$repeat_style" "$base_key" "$repeat_index")"
+        fi
         if [[ -n "${seen_keys[$key]+x}" ]]; then
             echo "    duplicate $key in $(basename "$example")" >&2
             continue
