@@ -70,7 +70,7 @@ enabled_named_volume_specs() {
         [ -n "$key" ] && [ -n "$mount" ] && [ -n "$source" ] && [ -n "$target" ] || continue
         value="$(configured_value "$config_dir" "$key")"
         case "${value,,}" in 1|true|yes|on) ;; *) continue ;; esac
-        valid_path "$mount" && valid_path "$source" && valid_path "$target" || {
+        valid_path "$mount" && valid_path "$source" && valid_target "$target" || {
             echo "Invalid #named-volume for $key" >&2
             return 1
         }
@@ -109,6 +109,10 @@ valid_path() {
     [[ "$path" == /* && "$path" != *:* && "$path" != *'|'* && "$path" != *';'* && "$path" != *$'\n'* && "$path" != *$'\r'* ]]
 }
 
+valid_target() {
+    valid_path "$1" || [[ "$1" =~ ^@[A-Za-z_][A-Za-z0-9_]*@/[^:|\;]*$ ]]
+}
+
 safe_name() {
     printf '%s' "$1" | tr '[:upper:]_' '[:lower:]-' | sed 's/[^a-z0-9_.-]/-/g'
 }
@@ -141,7 +145,7 @@ case "$command" in
         emit_entries "$config_dir"
         links=""
         while IFS=$'\t' read -r _ mount source target kind; do
-            valid_path "$mount" && valid_path "$source" && valid_path "$target" || {
+            valid_path "$mount" && valid_path "$source" && valid_target "$target" || {
                 echo "Invalid #named-volume specification" >&2
                 exit 1
             }
