@@ -49,23 +49,24 @@ named_volume_specs() {
         awk '
         function trim(s) { sub(/^[[:space:]]+/, "", s); sub(/[[:space:]]+$/, "", s); return s }
         /^[[:space:]]*#named-volume:/ {
-            spec=$0
-            sub(/^[[:space:]]*#named-volume:[[:space:]]*/, "", spec)
-            spec=trim(spec)
+            value=$0
+            sub(/^[[:space:]]*#named-volume:[[:space:]]*/, "", value)
+            specs[++count]=trim(value)
             next
         }
-        spec != "" && /^[[:space:]]*[A-Za-z_][A-Za-z0-9_]*[[:space:]]*=/ {
+        count && /^[[:space:]]*[A-Za-z_][A-Za-z0-9_]*[[:space:]]*=/ {
             key=$0
             sub(/[[:space:]]*=.*/, "", key)
-            print trim(key) "\t" spec
-            spec=""
+            for (i=1; i<=count; i++) print trim(key) "\t" specs[i]
+            delete specs
+            count=0
         }' "$file"
     done < <(example_files "$config_dir")
 }
 
 enabled_named_volume_specs() {
-    local config_dir="$1" key mount source target value
-    while IFS=$'\t ' read -r key mount source target; do
+    local config_dir="$1" key mount source target kind value
+    while IFS=$'\t ' read -r key mount source target kind; do
         [ -n "$key" ] && [ -n "$mount" ] && [ -n "$source" ] && [ -n "$target" ] || continue
         value="$(configured_value "$config_dir" "$key")"
         case "${value,,}" in 1|true|yes|on) ;; *) continue ;; esac
@@ -73,8 +74,9 @@ enabled_named_volume_specs() {
             echo "Invalid #named-volume for $key" >&2
             return 1
         }
-        printf '%s\t%s\t%s\t%s\n' "$key" "$mount" "$source" "$target"
-    done < <(named_volume_specs "$config_dir" | awk -F '\t' '!seen[$1]++')
+        case "$kind" in ""|file|dir) ;; *) echo "Invalid #named-volume type for $key" >&2; return 1 ;; esac
+        printf '%s\t%s\t%s\t%s\t%s\n' "$key" "$mount" "$source" "$target" "$kind"
+    done < <(named_volume_specs "$config_dir" | awk -F '\t' '!seen[$0]++')
 }
 
 path_keys() {
@@ -138,14 +140,14 @@ case "$command" in
     entries)
         emit_entries "$config_dir"
         links=""
-        while IFS=$'\t ' read -r _ mount source target; do
+        while IFS=$'\t' read -r _ mount source target kind; do
             valid_path "$mount" && valid_path "$source" && valid_path "$target" || {
                 echo "Invalid #named-volume specification" >&2
                 exit 1
             }
-            spec="$mount|$source|$target"
+            spec="$mount|$source|$target|$kind"
             links="${links:+$links;}$spec"
-        done < <(named_volume_specs "$config_dir" | awk -F '\t' '!seen[$1]++')
+        done < <(enabled_named_volume_specs "$config_dir")
         [ -z "$links" ] || printf 'NAMED_VOLUME_LINKS\t%s\n' "$links"
         ;;
     mounts)
@@ -154,9 +156,9 @@ case "$command" in
             prefix="${key%_PERSISTENT_PATH}"
             printf '%s-%s-persistent:%s:Z\n' "$(safe_name "$container_name")" "$(safe_name "$prefix")" "$path"
         done < <(emit_entries "$config_dir")
-        while IFS=$'\t' read -r _ mount _ _; do
+        while IFS=$'\t' read -r _ mount _ _ _; do
             printf '%s-%s:%s:Z\n' "$(safe_name "$container_name")" "$(safe_name "${mount##*/}")" "$mount"
-        done < <(enabled_named_volume_specs "$config_dir")
+        done < <(enabled_named_volume_specs "$config_dir" | awk -F '\t' '!seen[$2]++')
         ;;
     init)
         while IFS= read -r key; do
