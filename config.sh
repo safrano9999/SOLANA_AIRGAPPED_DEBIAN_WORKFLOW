@@ -478,7 +478,8 @@ configure_from_example() {
     local -a db_config_keys=()
     local -a db_backend_keys=()
     local required_next=false
-    local directive condition condition_key condition_value target_key target_list
+    local secret_next=false
+    local directive condition condition_key condition_value target_key target_list secret
     local repeat_group repeat_style repeat_fields base_key repeat_choice repeat_index
     local pending_value_dupe="" pending_reverse_varname="" value_dupe_target value_dupe_existing value_dupe_choice
     local generator_label choice
@@ -909,12 +910,22 @@ configure_from_example() {
             required_next=true
             continue
         fi
-        if [[ -z "$stripped" || "$stripped" == \#* ]]; then
+        if [[ "$stripped" == "#secret" ]]; then
+            secret_next=true
+            continue
+        fi
+        if [[ -z "$stripped" ]]; then
             required_next=false
+            secret_next=false
+            continue
+        fi
+        if [[ "$stripped" == \#* ]]; then
             continue
         fi
         required="$required_next"
+        secret="$secret_next"
         required_next=false
+        secret_next=false
 
         entry="${line%%#*}"
         entry="${entry#"${entry%%[![:space:]]*}"}"
@@ -1016,7 +1027,12 @@ configure_from_example() {
                     choice="${choice:-2}"
                     case "$choice" in
                         1)
-                            read -r -p "    $key: " val || read_status=$?
+                            if [ "$secret" = "true" ]; then
+                                read -r -s -p "    $key: " val || read_status=$?
+                                echo "" >&2
+                            else
+                                read -r -p "    $key: " val || read_status=$?
+                            fi
                             ;;
                         2)
                             val="$(run_openssl_generator "$default")" || {
@@ -1050,7 +1066,10 @@ configure_from_example() {
             if provider_selector_key "$key"; then
                 prompt_suffix="$(provider_prompt "$example" "$key")"
             fi
-            if [ -n "$default" ] && [ -t 0 ]; then
+            if [ "$secret" = "true" ] && [ -t 0 ]; then
+                read -r -s -p "    $key ${prompt_suffix}: " val || read_status=$?
+                echo "" >&2
+            elif [ -n "$default" ] && [ -t 0 ]; then
                 read -e -i "$default" -r -p "    $key ${prompt_suffix}: " val || read_status=$?
                 used_prefill=true
             else
