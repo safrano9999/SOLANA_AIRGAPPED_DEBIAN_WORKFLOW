@@ -469,6 +469,7 @@ configure_from_example() {
     declare -A autofill_blank_keys=()
     declare -A skip_existing_keys=()
     declare -A value_dupe_targets=()
+    declare -A reverse_varname_sources=()
     declare -A repeat_group_styles=()
     declare -A repeat_group_fields=()
     declare -A repeat_key_groups=()
@@ -479,7 +480,7 @@ configure_from_example() {
     local required_next=false
     local directive condition condition_key condition_value target_key target_list
     local repeat_group repeat_style repeat_fields base_key repeat_choice repeat_index
-    local pending_value_dupe="" value_dupe_target value_dupe_existing value_dupe_choice
+    local pending_value_dupe="" pending_reverse_varname="" value_dupe_target value_dupe_existing value_dupe_choice
     local generator_label choice
     local rule_key db_bulk_eligible=false db_bulk_decided=false
 
@@ -595,6 +596,11 @@ configure_from_example() {
             [[ "$pending_value_dupe" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || pending_value_dupe=""
             continue
         fi
+        if [[ "$stripped" == \#reverse-varname:* ]]; then
+            pending_reverse_varname="$(trim "${stripped#\#reverse-varname:}")"
+            [[ "$pending_reverse_varname" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || pending_reverse_varname=""
+            continue
+        fi
         [[ -z "$stripped" || "$stripped" == \#* ]] && continue
 
         entry="${line%%#*}"
@@ -605,7 +611,14 @@ configure_from_example() {
                 value_dupe_targets[$key]="$pending_value_dupe"
             fi
         fi
+        if [[ "$entry" == *=* && -n "$pending_reverse_varname" ]]; then
+            key="$(trim "${entry%%=*}")"
+            if [[ "$key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
+                reverse_varname_sources[$key]="$pending_reverse_varname"
+            fi
+        fi
         pending_value_dupe=""
+        pending_reverse_varname=""
     done 6< "$example"
 
     if [ "$(basename "$target")" = ".env" ] && [ "${#db_backend_keys[@]}" -gt 1 ]; then
@@ -679,6 +692,28 @@ configure_from_example() {
                 return 1
                 ;;
         esac
+    }
+
+    maybe_apply_reverse_varname() {
+        local alias_base_key="$1" alias_name="$2"
+        local source_base_key source_key source_value group index style
+
+        [ "$(basename "$target")" = ".env" ] || return 0
+        source_base_key="${reverse_varname_sources[$alias_base_key]:-}"
+        [ -n "$source_base_key" ] || return 0
+        [[ "$alias_name" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || return 0
+
+        source_key="$source_base_key"
+        group="${repeat_key_groups[$alias_base_key]:-}"
+        if [ -n "$group" ]; then
+            index="${REPEAT_GROUP_INDEXES[$group]}"
+            style="${repeat_group_styles[$group]}"
+            source_key="$(repeat_group_key "$group" "$style" "$source_base_key" "$index")"
+        fi
+        source_value="$(read_kv_file "$target" "$source_key" || true)"
+        [ -n "$source_value" ] || return 0
+        write_config_value "$target" "$alias_name" "$source_value"
+        echo "    $alias_name= injected from $source_key"
     }
 
     normalize_db_backend() {
@@ -934,6 +969,7 @@ configure_from_example() {
             echo "$key=$env_existing" >> "$target"
             echo "    $key= migrated from .env"
             maybe_apply_value_dupe "$key" "$env_existing"
+            maybe_apply_reverse_varname "$base_key" "$env_existing"
             activate_blank_rules "$key" "$env_existing"
             continue
         fi
@@ -944,6 +980,7 @@ configure_from_example() {
                 echo "    $key=$existing"
             fi
             maybe_apply_value_dupe "$key" "$existing"
+            maybe_apply_reverse_varname "$base_key" "$existing"
             activate_blank_rules "$key" "$existing"
             continue
         fi
@@ -953,6 +990,7 @@ configure_from_example() {
             echo "$key=$env_existing" >> "$target"
             echo "    $key= migrated from .env"
             maybe_apply_value_dupe "$key" "$env_existing"
+            maybe_apply_reverse_varname "$base_key" "$env_existing"
             activate_blank_rules "$key" "$env_existing"
             continue
         fi
@@ -1054,6 +1092,7 @@ configure_from_example() {
         fi
         echo "$key=$val" >> "$target"
         maybe_apply_value_dupe "$key" "$val"
+        maybe_apply_reverse_varname "$base_key" "$val"
         activate_blank_rules "$key" "$val"
     done 3< "$example"
 

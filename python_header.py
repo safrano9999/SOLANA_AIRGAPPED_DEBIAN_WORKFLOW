@@ -170,8 +170,6 @@ def _normalize_openai_v1_base_url(raw_url: str, raw_port: str = "") -> str:
         return ""
     if "://" not in url:
         url = f"http://{url}"
-    if url.endswith("/v1"):
-        url = url[:-3].rstrip("/")
 
     parsed = urlsplit(url)
     try:
@@ -183,8 +181,9 @@ def _normalize_openai_v1_base_url(raw_url: str, raw_port: str = "") -> str:
     if port and not has_port:
         netloc = f"{netloc}:{port}"
 
-    base = urlunsplit((parsed.scheme, netloc, parsed.path.rstrip("/"), "", "")).rstrip("/")
-    return f"{base}/v1"
+    path = parsed.path.rstrip("/")
+    base = urlunsplit((parsed.scheme, netloc, path, "", "")).rstrip("/")
+    return base if path else f"{base}/v1"
 
 
 def _openai_v1_suffixes(values: dict[str, str]) -> list[tuple[int, str]]:
