@@ -33,7 +33,12 @@ configured_value() {
     local config_dir="$1" key="$2" file value
     value="${!key:-}"
     [ -n "$value" ] && { printf '%s\n' "$value"; return 0; }
-    for file in "$config_dir/config.conf" "$config_dir/container.conf" "$config_dir/.env" "$config_dir/build.conf"; do
+    for file in \
+        "$config_dir/${CONFIG_CONTAINER_NAME:-}_config.conf" \
+        "$config_dir/${CONFIG_CONTAINER_NAME:-}_container.conf" \
+        "$config_dir/${CONFIG_CONTAINER_NAME:-}.env" \
+        "$config_dir/${CONFIG_CONTAINER_NAME:-}_build.conf" \
+        "$config_dir/config.conf" "$config_dir/container.conf" "$config_dir/.env" "$config_dir/build.conf"; do
         value="$(read_key "$file" "$key" || true)"
         [ -n "$value" ] && { printf '%s\n' "$value"; return 0; }
     done
@@ -74,14 +79,14 @@ enabled_named_volume_specs() {
             echo "Invalid #named-volume for $key" >&2
             return 1
         }
-        case "$kind" in ""|file|dir) ;; *) echo "Invalid #named-volume type for $key" >&2; return 1 ;; esac
+        case "$kind" in ""|file|dir|link) ;; *) echo "Invalid #named-volume type for $key" >&2; return 1 ;; esac
         printf '%s\t%s\t%s\t%s\t%s\n' "$key" "$mount" "$source" "$target" "$kind"
     done < <(named_volume_specs "$config_dir" | awk -F '\t' '!seen[$0]++')
 }
 
 path_keys() {
     local config_dir="$1" file
-    for file in "$config_dir"/*build.conf_example "$config_dir/build.conf" "$config_dir/container.conf"; do
+    for file in "$config_dir"/*build.conf_example "$config_dir/${CONFIG_CONTAINER_NAME:-}_build.conf" "$config_dir/${CONFIG_CONTAINER_NAME:-}_container.conf" "$config_dir/build.conf" "$config_dir/container.conf"; do
         [ -f "$file" ] || continue
         awk '
         /^[[:space:]]*#/ { next }
@@ -98,7 +103,7 @@ configured_path() {
     local config_dir="$1" key="$2" file value
     value="${!key:-}"
     [ -n "$value" ] && { printf '%s\n' "$value"; return 0; }
-    for file in "$config_dir/container.conf" "$config_dir/build.conf" "$config_dir"/*build.conf_example; do
+    for file in "$config_dir/${CONFIG_CONTAINER_NAME:-}_container.conf" "$config_dir/${CONFIG_CONTAINER_NAME:-}_build.conf" "$config_dir/container.conf" "$config_dir/build.conf" "$config_dir"/*build.conf_example; do
         value="$(read_key "$file" "$key" || true)"
         [ -n "$value" ] && { printf '%s\n' "$value"; return 0; }
     done

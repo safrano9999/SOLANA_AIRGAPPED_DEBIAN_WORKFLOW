@@ -29,7 +29,11 @@ configured_value() {
     local config_dir="$1" key="$2" default_value="$3" file value
     value="${!key:-}"
     [ -n "$value" ] && { printf '%s\n' "$value"; return 0; }
-    for file in "$config_dir/.env" "$config_dir/config.conf" "$config_dir/container.conf"; do
+    for file in \
+        "$config_dir/${CONFIG_CONTAINER_NAME:-}.env" \
+        "$config_dir/${CONFIG_CONTAINER_NAME:-}_config.conf" \
+        "$config_dir/${CONFIG_CONTAINER_NAME:-}_container.conf" \
+        "$config_dir/.env" "$config_dir/config.conf" "$config_dir/container.conf"; do
         value="$(read_key "$file" "$key" || true)"
         [ -n "$value" ] && { printf '%s\n' "$value"; return 0; }
     done
