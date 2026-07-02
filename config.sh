@@ -977,6 +977,7 @@ configure_from_example() {
         key="${key%"${key##*[![:space:]]}"}"
         default="${default#"${default%%[![:space:]]*}"}"
         default="${default%"${default##*[![:space:]]}"}"
+        default="${default//\$\{CONTAINER_NAME\}/$CONTAINER_NAME}"
 
         [[ "$key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || continue
         base_key="$key"
