@@ -530,7 +530,7 @@ configure_from_example() {
         directive="$(trim "${stripped#\#repeat-group:}")"
         read -r repeat_group repeat_style repeat_fields <<< "$directive"
         [[ "$repeat_group" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || continue
-        [[ "$repeat_style" == "suffix" || "$repeat_style" == "infix" ]] || continue
+        [[ "$repeat_style" == "suffix" || "$repeat_style" == "suffix02" || "$repeat_style" == "infix" ]] || continue
         [ -n "$repeat_fields" ] || continue
         repeat_group_styles[$repeat_group]="$repeat_style"
         for target_key in $repeat_fields; do
@@ -550,6 +550,8 @@ configure_from_example() {
             printf '%s\n' "$field"
         elif [ "$style" = "infix" ]; then
             printf '%s_%s_%s\n' "$group" "$index" "${field#${group}_}"
+        elif [ "$style" = "suffix02" ]; then
+            printf '%s_%02d\n' "$field" "$index"
         else
             printf '%s_%s\n' "$field" "$index"
         fi
@@ -1261,6 +1263,7 @@ generate_container_files() {
     local -a caps=()
     local -a named_volumes=()
     local -a persistent_envs=()
+    local -a additional_lines=()
     local item source
 
     host_key="$(publish_host_key || true)"
@@ -1322,6 +1325,11 @@ generate_container_files() {
 
             key="$(trim "${entry%%=*}")"
             value="$(config_value "$key" || true)"
+
+            if [[ "$key" =~ ^ADDITIONAL_LINE(_[0-9]+)?$ ]]; then
+                case "${value,,}" in ""|blank|null) ;; *) add_unique "$value" additional_lines ;; esac
+                continue
+            fi
 
             if [[ "$key" == *_PUBLISH_PORT ]]; then
                 prefix="${key%_PUBLISH_PORT}"
@@ -1478,6 +1486,7 @@ generate_container_files() {
         for item in "${caps[@]}"; do printf 'AddCapability=%s\n' "$item"; done
         [ "${#devices[@]}" -gt 0 ] && printf '# Device mappings from *_DEVICES in config.conf\n'
         for item in "${devices[@]}"; do printf 'AddDevice=%s\n' "$item"; done
+        for item in "${additional_lines[@]}"; do printf '%s\n' "$item"; done
         printf 'AutoUpdate=registry\n\n'
         printf '[Service]\n'
         printf 'Restart=always\n'
