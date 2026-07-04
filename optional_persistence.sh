@@ -122,6 +122,39 @@ safe_name() {
     printf '%s' "$1" | tr '[:upper:]_' '[:lower:]-' | sed 's/[^a-z0-9_.-]/-/g'
 }
 
+sync_folder_keys() {
+    local config_dir="$1" file
+    for file in "$config_dir"/.env "$config_dir"/*.env "$config_dir"/config.conf "$config_dir"/container.conf "$config_dir"/*_config.conf "$config_dir"/*_container.conf; do
+        [ -f "$file" ] || continue
+        awk -F= '
+        /^[[:space:]]*#/ { next }
+        $1 ~ /^[[:space:]]*[A-Za-z_][A-Za-z0-9_]*_SYNC_FOLDERS(_[0-9]+)?[[:space:]]*$/ {
+            key=$1
+            gsub(/^[[:space:]]+|[[:space:]]+$/, "", key)
+            if (!seen[key]++) print key
+        }' "$file"
+    done | awk '!seen[$0]++'
+}
+
+named_sync_paths() {
+    local config_dir="$1" key value
+    while IFS= read -r key || [ -n "$key" ]; do
+        [ -n "$key" ] || continue
+        value="$(configured_value "$config_dir" "$key")"
+        [ -n "$value" ] || continue
+        python3 - "$value" <<'PY'
+import csv
+import sys
+
+for entry in next(csv.reader([sys.argv[1]], skipinitialspace=True), []):
+    local, separator, _remote = entry.partition("|")
+    local = local.strip()
+    if separator and local.startswith("/named_volumes/"):
+        print(local)
+PY
+    done < <(sync_folder_keys "$config_dir")
+}
+
 emit_entries() {
     local config_dir="$1" key path
     while IFS= read -r key || [ -n "$key" ]; do
@@ -168,6 +201,10 @@ case "$command" in
         while IFS=$'\t' read -r _ mount _ _ _; do
             printf '%s-%s:%s:Z\n' "$(safe_name "$container_name")" "$(safe_name "${mount##*/}")" "$mount"
         done < <(enabled_named_volume_specs "$config_dir" | awk -F '\t' '!seen[$2]++')
+        while IFS= read -r path; do
+            valid_path "$path" || { echo "Invalid sync path: $path" >&2; exit 1; }
+            printf '%s-%s:%s:Z\n' "$(safe_name "$container_name")" "$(safe_name "${path##*/}")" "$path"
+        done < <(named_sync_paths "$config_dir" | awk '!seen[$0]++')
         ;;
     init)
         while IFS= read -r key; do

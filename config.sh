@@ -520,7 +520,7 @@ configure_from_example() {
     local required_next=false
     local secret_next=false
     local directive condition condition_key condition_value target_key target_list secret
-    local repeat_group repeat_style repeat_fields base_key repeat_choice repeat_index
+    local repeat_group repeat_style repeat_fields base_key repeat_choice repeat_index repeat_suffix
     local pending_value_dupe="" pending_reverse_varname="" value_dupe_target value_dupe_existing value_dupe_choice
     local pending_choices="" pending_when="" pending_when_not="" pending_default_rules=""
     local field_choices="" field_when="" field_when_not="" field_default_rules=""
@@ -1046,6 +1046,9 @@ configure_from_example() {
             repeat_style="${repeat_group_styles[$repeat_group]}"
             repeat_index="${REPEAT_GROUP_INDEXES[$repeat_group]}"
             key="$(repeat_group_key "$repeat_group" "$repeat_style" "$base_key" "$repeat_index")"
+            repeat_suffix=""
+            [ "$repeat_index" -eq 1 ] || printf -v repeat_suffix '_%02d' "$repeat_index"
+            default="${default//\$\{REPEAT_SUFFIX\}/$repeat_suffix}"
         fi
         if [[ -n "${seen_keys[$key]+x}" ]]; then
             echo "    duplicate $key in $(basename "$example")" >&2
