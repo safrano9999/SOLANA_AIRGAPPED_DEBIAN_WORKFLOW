@@ -7,7 +7,7 @@ Usage — add this as first import in every entrypoint:
 
 How it works:
   1. Loads config.conf from the calling script's directory
-  2. Loads auxiliary *.env files, then .env
+  2. Loads auxiliary *.env files, then .env; falls back to env.example if none exist
   3. Injected process env wins over file values
   4. If FASTAPI_HOST was injected by the process, the web server binds 0.0.0.0
   5. All values are accessible via env dict, get(), or os.environ
@@ -69,6 +69,10 @@ def _read_env_files(env_dir: Path) -> dict[str, str]:
     dot_env = env_dir / ".env"
     if dot_env.exists():
         files.append(dot_env)
+    if not files:
+        env_example = env_dir / "env.example"
+        if env_example.exists():
+            files.append(env_example)
     for path in files:
         values.update(_read_env_file(path))
     return values

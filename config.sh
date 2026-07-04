@@ -521,6 +521,8 @@ configure_from_example() {
     local directive condition condition_key condition_value target_key target_list secret
     local repeat_group repeat_style repeat_fields base_key repeat_choice repeat_index
     local pending_value_dupe="" pending_reverse_varname="" value_dupe_target value_dupe_existing value_dupe_choice
+    local pending_choices="" pending_when="" pending_when_not="" pending_default_rules=""
+    local field_choices="" field_when="" field_when_not="" field_default_rules=""
     local generator_label choice
     local rule_key db_bulk_eligible=false db_bulk_decided=false
 
@@ -865,6 +867,11 @@ configure_from_example() {
 
         [ "$db_bulk_eligible" = "true" ] || return 1
         [ "$db_bulk_decided" = "false" ] || return 1
+        selected_backend="$(normalize_db_backend "$selected_backend")"
+        case "$selected_backend" in
+            sqlite|postgres|mysql|mariadb) ;;
+            *) return 1 ;;
+        esac
         db_bulk_decided=true
 
         echo ""
@@ -947,6 +954,22 @@ configure_from_example() {
 
     while IFS= read -r line <&3; do
         stripped="${line#"${line%%[![:space:]]*}"}"
+        if [[ "$stripped" == \#choices:* ]]; then
+            pending_choices="$(trim "${stripped#\#choices:}")"
+            continue
+        fi
+        if [[ "$stripped" == \#when:* ]]; then
+            pending_when="$(trim "${stripped#\#when:}")"
+            continue
+        fi
+        if [[ "$stripped" == \#when-not:* ]]; then
+            pending_when_not="$(trim "${stripped#\#when-not:}")"
+            continue
+        fi
+        if [[ "$stripped" == \#default-if:* ]]; then
+            pending_default_rules+="$(trim "${stripped#\#default-if:}")"$'\n'
+            continue
+        fi
         if [[ "$stripped" == \#required:* ]]; then
             required_next=true
             continue
@@ -958,6 +981,10 @@ configure_from_example() {
         if [[ -z "$stripped" ]]; then
             required_next=false
             secret_next=false
+            pending_choices=""
+            pending_when=""
+            pending_when_not=""
+            pending_default_rules=""
             continue
         fi
         if [[ "$stripped" == \#* ]]; then
@@ -965,8 +992,16 @@ configure_from_example() {
         fi
         required="$required_next"
         secret="$secret_next"
+        field_choices="$pending_choices"
+        field_when="$pending_when"
+        field_when_not="$pending_when_not"
+        field_default_rules="$pending_default_rules"
         required_next=false
         secret_next=false
+        pending_choices=""
+        pending_when=""
+        pending_when_not=""
+        pending_default_rules=""
 
         entry="${line%%#*}"
         entry="${entry#"${entry%%[![:space:]]*}"}"
@@ -979,6 +1014,18 @@ configure_from_example() {
         key="${key%"${key##*[![:space:]]}"}"
         default="${default#"${default%%[![:space:]]*}"}"
         default="${default%"${default##*[![:space:]]}"}"
+        while IFS= read -r directive || [ -n "$directive" ]; do
+            [ -n "$directive" ] || continue
+            condition="${directive%%[[:space:]]*}"
+            value="$(trim "${directive#"$condition"}")"
+            [[ "$condition" == *=* ]] || continue
+            condition_key="${condition%%=*}"
+            condition_value="$(normalize_rule_value "${condition#*=}")"
+            existing="$(config_value "$condition_key" || true)"
+            if [ "$(normalize_rule_value "$existing")" = "$condition_value" ]; then
+                default="$value"
+            fi
+        done <<< "$field_default_rules"
         default="${default//\$\{CONTAINER_NAME\}/$CONTAINER_NAME}"
 
         [[ "$key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || continue
@@ -996,6 +1043,27 @@ configure_from_example() {
             continue
         fi
         seen_keys[$key]=1
+
+        if [ -n "$field_when" ]; then
+            condition_key="${field_when%%=*}"
+            condition_value="$(normalize_rule_value "${field_when#*=}")"
+            existing="$(config_value "$condition_key" || true)"
+            if [ "$(normalize_rule_value "$existing")" != "$condition_value" ]; then
+                write_config_value "$target" "$key" "blank"
+                echo "    $key= blank"
+                continue
+            fi
+        fi
+        if [ -n "$field_when_not" ]; then
+            condition_key="${field_when_not%%=*}"
+            condition_value="$(normalize_rule_value "${field_when_not#*=}")"
+            existing="$(config_value "$condition_key" || true)"
+            if [ "$(normalize_rule_value "$existing")" = "$condition_value" ]; then
+                write_config_value "$target" "$key" "blank"
+                echo "    $key= blank"
+                continue
+            fi
+        fi
 
         if [[ -n "${skip_existing_keys[$key]+x}" ]]; then
             continue
@@ -1107,6 +1175,8 @@ configure_from_example() {
             fi
             if provider_selector_key "$key"; then
                 prompt_suffix="$(provider_prompt "$example" "$key")"
+            elif [ -n "$field_choices" ]; then
+                prompt_suffix="[$(printf '%s' "$field_choices" | tr ' ' '/')]"
             fi
             if [ "$secret" = "true" ] && [ -t 0 ]; then
                 read -r -s -p "    $key ${prompt_suffix}: " val || read_status=$?
@@ -1127,6 +1197,16 @@ configure_from_example() {
             fi
             if provider_selector_key "$key"; then
                 val="$(normalize_provider_value "$example" "$key" "$val")"
+            fi
+            if [ -n "$field_choices" ]; then
+                if [[ "$val" =~ ^[0-9]+$ ]]; then
+                    val="$(printf '%s\n' $field_choices | sed -n "${val}p")"
+                fi
+                if ! printf '%s\n' $field_choices | grep -Fxq "$val"; then
+                    echo "    choose one of: $field_choices"
+                    val=""
+                    continue
+                fi
             fi
             if [ "$required" != "true" ] || [ -n "$val" ]; then
                 break
