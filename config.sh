@@ -512,6 +512,7 @@ configure_from_example() {
     declare -A repeat_group_styles=()
     declare -A repeat_group_fields=()
     declare -A repeat_key_groups=()
+    declare -A repeat_optional_complete=()
     declare -A db_defaults=()
     declare -A db_seen_keys=()
     local -a db_config_keys=()
@@ -528,6 +529,14 @@ configure_from_example() {
 
     while IFS= read -r line <&7; do
         stripped="${line#"${line%%[![:space:]]*}"}"
+        if [[ "$stripped" == \#repeat-optional-complete:* ]]; then
+            directive="$(trim "${stripped#\#repeat-optional-complete:}")"
+            for target_key in $directive; do
+                [[ "$target_key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || continue
+                repeat_optional_complete[$target_key]=1
+            done
+            continue
+        fi
         [[ "$stripped" == \#repeat-group:* ]] || continue
         directive="$(trim "${stripped#\#repeat-group:}")"
         read -r repeat_group repeat_style repeat_fields <<< "$directive"
@@ -574,7 +583,7 @@ configure_from_example() {
                 mapped="$(repeat_group_key "$group" "$style" "$field" "$index")"
                 value="$(read_kv_file "$target" "$mapped" || true)"
                 case "${value,,}" in ""|blank|null) value="" ;; esac
-                if [ -z "$value" ]; then
+                if [ -z "$value" ] && [[ -z "${repeat_optional_complete[$field]+x}" ]]; then
                     all=false
                 fi
             done
