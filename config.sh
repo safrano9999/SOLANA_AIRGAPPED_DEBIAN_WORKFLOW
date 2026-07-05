@@ -12,10 +12,13 @@ fi
 
 PROJECT_NAME="$(basename "$DIR")"
 CONTAINER_NAME="${PROJECT_NAME,,}"
-ENV_FILE="$DIR/.env"
-CONFIG_FILE="$DIR/config.conf"
-CONTAINER_FILE="$DIR/container.conf"
-BUILD_FILE="$DIR/build.conf"
+OUTPUT_DIR="${CONFIG_OUTPUT_DIR:-$DIR}"
+mkdir -p "$OUTPUT_DIR"
+OUTPUT_DIR="$(cd "$OUTPUT_DIR" && pwd)"
+ENV_FILE="$OUTPUT_DIR/.env"
+CONFIG_FILE="$OUTPUT_DIR/config.conf"
+CONTAINER_FILE="$OUTPUT_DIR/container.conf"
+BUILD_FILE="${CONFIG_BUILD_FILE:-$OUTPUT_DIR/build.conf}"
 CONTAINER_NAME_MODE=false
 CONFIG_SHOW=""
 NO_CONTAINER=false
@@ -69,10 +72,10 @@ configure_container_name() {
 
     CONTAINER_NAME="$value"
     export CONFIG_CONTAINER_NAME="$CONTAINER_NAME"
-    ENV_FILE="$DIR/$CONTAINER_NAME.env"
-    CONFIG_FILE="$DIR/${CONTAINER_NAME}_config.conf"
-    CONTAINER_FILE="$DIR/${CONTAINER_NAME}_container.conf"
-    BUILD_FILE="$DIR/${CONTAINER_NAME}_build.conf"
+    ENV_FILE="$OUTPUT_DIR/$CONTAINER_NAME.env"
+    CONFIG_FILE="$OUTPUT_DIR/${CONTAINER_NAME}_config.conf"
+    CONTAINER_FILE="$OUTPUT_DIR/${CONTAINER_NAME}_container.conf"
+    BUILD_FILE="${CONFIG_BUILD_FILE:-$OUTPUT_DIR/${CONTAINER_NAME}_build.conf}"
 }
 
 read_kv_file() {
@@ -354,9 +357,9 @@ add_repo_sot_file_mounts() {
 initialize_sqlite_persistence() {
     [ -x "$SQLITE_PERSISTENCE" ] || return 0
     if find "$DIR/safrano9999" -mindepth 1 -maxdepth 1 -type d -print -quit 2>/dev/null | grep -q .; then
-        "$SQLITE_PERSISTENCE" init --repo-root "$DIR/safrano9999" --config-dir "$DIR"
+        "$SQLITE_PERSISTENCE" init --repo-root "$DIR/safrano9999" --config-dir "$OUTPUT_DIR"
     else
-        "$SQLITE_PERSISTENCE" init --repo "$DIR" --config-dir "$DIR"
+        "$SQLITE_PERSISTENCE" init --repo "$DIR" --config-dir "$OUTPUT_DIR"
     fi
 }
 
@@ -370,21 +373,21 @@ add_sqlite_volume_mounts() {
             source="${item%%:*}"
             add_unique "$item" volumes
             add_unique "$source" named_volumes
-        done < <("$SQLITE_PERSISTENCE" mounts --repo-root "$DIR/safrano9999" --config-dir "$DIR" --container "$CONTAINER_NAME")
+        done < <("$SQLITE_PERSISTENCE" mounts --repo-root "$DIR/safrano9999" --config-dir "$OUTPUT_DIR" --container "$CONTAINER_NAME")
     elif find "$DIR/safrano9999" -maxdepth 1 -type f -name '*-latest.zip' -print -quit 2>/dev/null | grep -q .; then
         while IFS= read -r item || [ -n "$item" ]; do
             [ -n "$item" ] || continue
             source="${item%%:*}"
             add_unique "$item" volumes
             add_unique "$source" named_volumes
-        done < <("$SQLITE_PERSISTENCE" mounts --zip-root "$DIR/safrano9999" --config-dir "$DIR" --container "$CONTAINER_NAME")
+        done < <("$SQLITE_PERSISTENCE" mounts --zip-root "$DIR/safrano9999" --config-dir "$OUTPUT_DIR" --container "$CONTAINER_NAME")
     else
         while IFS= read -r item || [ -n "$item" ]; do
             [ -n "$item" ] || continue
             source="${item%%:*}"
             add_unique "$item" volumes
             add_unique "$source" named_volumes
-        done < <("$SQLITE_PERSISTENCE" mounts --repo "$DIR" --config-dir "$DIR" --container "$CONTAINER_NAME")
+        done < <("$SQLITE_PERSISTENCE" mounts --repo "$DIR" --config-dir "$OUTPUT_DIR" --container "$CONTAINER_NAME")
     fi
 }
 
@@ -396,10 +399,10 @@ add_optional_persistence_mounts() {
         source="${item%%:*}"
         add_unique "$item" volumes
         add_unique "$source" named_volumes
-    done < <("$OPTIONAL_PERSISTENCE" mounts --config-dir "$DIR" --container "$CONTAINER_NAME")
+    done < <("$OPTIONAL_PERSISTENCE" mounts --config-dir "$OUTPUT_DIR" --container "$CONTAINER_NAME")
     while IFS=$'\t' read -r key path; do
         add_unique "$key=$path" persistent_envs
-    done < <("$OPTIONAL_PERSISTENCE" entries --config-dir "$DIR")
+    done < <("$OPTIONAL_PERSISTENCE" entries --config-dir "$OUTPUT_DIR")
 }
 
 rewrite_config_with_comments() {
@@ -1253,9 +1256,9 @@ configure_from_example() {
 }
 
 existing_image() {
-    local quadlet="$DIR/$CONTAINER_NAME.container"
-    local compose="$DIR/docker-compose.yml"
-    $CONTAINER_NAME_MODE && compose="$DIR/$CONTAINER_NAME-compose.yml"
+    local quadlet="$OUTPUT_DIR/$CONTAINER_NAME.container"
+    local compose="$OUTPUT_DIR/docker-compose.yml"
+    $CONTAINER_NAME_MODE && compose="$OUTPUT_DIR/$CONTAINER_NAME-compose.yml"
 
     if [ -f "$quadlet" ]; then
         awk -F= '/^Image=/{print $2; exit}' "$quadlet"
@@ -1366,9 +1369,9 @@ generate_container_files() {
     fi
     [ -n "$host" ] || host="127.0.0.1"
     image="$(project_image)"
-    compose_file="$DIR/docker-compose.yml"
-    $CONTAINER_NAME_MODE && compose_file="$DIR/$CONTAINER_NAME-compose.yml"
-    quadlet_file="$DIR/$CONTAINER_NAME.container"
+    compose_file="$OUTPUT_DIR/docker-compose.yml"
+    $CONTAINER_NAME_MODE && compose_file="$OUTPUT_DIR/$CONTAINER_NAME-compose.yml"
+    quadlet_file="$OUTPUT_DIR/$CONTAINER_NAME.container"
 
     while IFS= read -r source_file || [ -n "$source_file" ]; do
         [ -f "$source_file" ] || continue
