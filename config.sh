@@ -118,6 +118,24 @@ config_value() {
     return 1
 }
 
+find_configured_value_elsewhere() {
+    local target="$1"
+    local wanted="$2"
+    local file value
+
+    OTHER_VALUE_FILE=""
+    OTHER_VALUE=""
+    for file in "$CONTAINER_FILE" "$CONFIG_FILE" "$ENV_FILE"; do
+        [ "$file" != "$target" ] || continue
+        if value="$(read_kv_file "$file" "$wanted")"; then
+            OTHER_VALUE_FILE="$file"
+            OTHER_VALUE="$value"
+            return 0
+        fi
+    done
+    return 1
+}
+
 provider_names_from_conf() {
     local provider_file="$1"
     local section name
@@ -494,7 +512,7 @@ configure_from_example() {
     local example="$1"
     local target="$2"
     local label="$3"
-    local env_existing=""
+    local other_existing=false
 
     [ -f "$example" ] || return 0
 
@@ -507,6 +525,7 @@ configure_from_example() {
     declare -A blank_if_targets=()
     declare -A autofill_blank_keys=()
     declare -A skip_existing_keys=()
+    declare -A externally_owned_keys=()
     declare -A value_dupe_targets=()
     declare -A reverse_varname_sources=()
     declare -A repeat_group_styles=()
@@ -1081,13 +1100,6 @@ configure_from_example() {
             continue
         fi
 
-        env_existing=""
-        if [ "$target" = "$CONFIG_FILE" ]; then
-            env_existing="$(read_kv_file "$ENV_FILE" "$key" || true)"
-        elif [ "$target" = "$CONTAINER_FILE" ]; then
-            env_existing="$(read_kv_file "$CONFIG_FILE" "$key" || read_kv_file "$ENV_FILE" "$key" || true)"
-        fi
-
         if [[ -n "${autofill_blank_keys[$key]+x}" ]]; then
             sed -i "/^${key}=/d" "$target" 2>/dev/null || true
             echo "$key=blank" >> "$target"
@@ -1097,13 +1109,17 @@ configure_from_example() {
 
         existing_line="$(grep "^${key}=" "$target" 2>/dev/null | head -1 || true)"
         existing="${existing_line#*=}"
-        if [ -n "$existing_line" ] && [ -z "$existing" ] && [ -n "$env_existing" ]; then
-            sed -i "/^${key}=/d" "$target" 2>/dev/null || true
-            echo "$key=$env_existing" >> "$target"
-            echo "    $key= migrated from .env"
-            maybe_apply_value_dupe "$key" "$env_existing"
-            maybe_apply_reverse_varname "$base_key" "$env_existing"
-            activate_blank_rules "$key" "$env_existing"
+        other_existing=false
+        if find_configured_value_elsewhere "$target" "$key" && [ -n "$OTHER_VALUE" ]; then
+            other_existing=true
+        fi
+        if [ "$other_existing" = "true" ] && { [ -z "$existing_line" ] || [ -z "$existing" ]; }; then
+            [ -z "$existing_line" ] || sed -i "/^${key}=/d" "$target" 2>/dev/null || true
+            externally_owned_keys[$key]=1
+            echo "    $key= exists in $(basename "$OTHER_VALUE_FILE")"
+            maybe_apply_value_dupe "$key" "$OTHER_VALUE"
+            maybe_apply_reverse_varname "$base_key" "$OTHER_VALUE"
+            activate_blank_rules "$key" "$OTHER_VALUE"
             continue
         fi
         if [ -n "$existing_line" ] && { [ "$required" != "true" ] || [ -n "$existing" ]; }; then
@@ -1118,15 +1134,6 @@ configure_from_example() {
             continue
         fi
         sed -i "/^${key}=$/d" "$target" 2>/dev/null || true
-
-        if [ -n "$env_existing" ]; then
-            echo "$key=$env_existing" >> "$target"
-            echo "    $key= migrated from .env"
-            maybe_apply_value_dupe "$key" "$env_existing"
-            maybe_apply_reverse_varname "$base_key" "$env_existing"
-            activate_blank_rules "$key" "$env_existing"
-            continue
-        fi
 
         if [ "$key" = "DISPLAY" ]; then
             handle_display_env "$target"
@@ -1250,6 +1257,9 @@ configure_from_example() {
     done 3< "$example"
 
     rewrite_config_with_comments "$example" "$target"
+    for key in "${!externally_owned_keys[@]}"; do
+        sed -i "/^${key}=/d" "$target"
+    done
 }
 
 existing_image() {
