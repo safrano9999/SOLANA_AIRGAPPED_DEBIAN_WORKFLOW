@@ -297,6 +297,56 @@ write_config_value_if_missing() {
     echo "    $key=$value"
 }
 
+project_publish_port() {
+    local value="$1"
+    local container_nr="$2"
+    local first second projected_first projected_second
+
+    if [[ "$value" =~ ^([0-9]+)-([0-9]+)$ ]]; then
+        first="${BASH_REMATCH[1]}"
+        second="${BASH_REMATCH[2]}"
+    elif [[ "$value" =~ ^[0-9]+$ ]]; then
+        first="$value"
+        second=""
+    else
+        echo "Invalid publish-port preset: $value" >&2
+        return 1
+    fi
+    if [ "$first" -lt 1 ] || [ "$first" -ge 20000 ] || \
+       { [ -n "$second" ] && { [ "$second" -lt "$first" ] || [ "$second" -ge 20000 ]; }; }; then
+        echo "Publish-port preset must be within 1-19999: $value" >&2
+        return 1
+    fi
+    projected_first=$((container_nr * 10000 + first % 10000))
+    [ "$projected_first" -le 65535 ] || { echo "Projected port exceeds 65535: $projected_first" >&2; return 1; }
+    if [ -z "$second" ]; then
+        printf '%s\n' "$projected_first"
+        return 0
+    fi
+    projected_second=$((container_nr * 10000 + second % 10000))
+    [ "$projected_second" -le 65535 ] || { echo "Projected port exceeds 65535: $projected_second" >&2; return 1; }
+    printf '%s-%s\n' "$projected_first" "$projected_second"
+}
+
+missing_publish_port_count() {
+    local example="$1"
+    local target="$2"
+    local key value count=0
+
+    while IFS= read -r key; do
+        value="$(read_kv_file "$target" "$key" || true)"
+        [ -n "$value" ] || count=$((count + 1))
+    done < <(awk -F= '
+        /^[[:space:]]*#/ { next }
+        $1 ~ /^[[:space:]]*[A-Za-z_][A-Za-z0-9_]*_PUBLISH_PORT[[:space:]]*$/ {
+            key=$1
+            gsub(/^[[:space:]]+|[[:space:]]+$/, "", key)
+            if (!seen[key]++) print key
+        }
+    ' "$example")
+    printf '%s\n' "$count"
+}
+
 add_unique() {
     local value="$1"
     shift
@@ -545,6 +595,36 @@ configure_from_example() {
     local field_choices="" field_when="" field_when_not="" field_default_rules=""
     local generator_label choice
     local rule_key db_bulk_eligible=false db_bulk_decided=false
+    local container_nr="" publish_port_count=0 publish_port_choice="" publish_port_autofill=false
+
+    if [ "$target" = "$CONTAINER_FILE" ]; then
+        container_nr="$(read_kv_file "$target" CONTAINER_NR || true)"
+        case "${container_nr^^}" in
+            ""|BLANK|MANUAL) container_nr="" ;;
+            TUN) container_nr="TUN" ;;
+            *)
+                [[ "$container_nr" =~ ^[2-5]$ ]] || {
+                    echo "Invalid CONTAINER_NR=$container_nr; use 2-5, TUN or blank" >&2
+                    return 1
+                }
+                ;;
+        esac
+        if [[ "$container_nr" =~ ^[2-5]$ ]]; then
+            publish_port_count="$(missing_publish_port_count "$example" "$target")"
+            if [ "$publish_port_count" -gt 1 ]; then
+                publish_port_choice="y"
+                if [ -t 0 ]; then
+                    read -r -p "    Auto-set $publish_port_count publish ports for ${container_nr}0-$((container_nr + 1))0? [Y/n]: " publish_port_choice || true
+                    publish_port_choice="${publish_port_choice:-y}"
+                fi
+                case "${publish_port_choice,,}" in
+                    y|yes) publish_port_autofill=true ;;
+                    n|no) ;;
+                    *) echo "    choose y or n" >&2; return 1 ;;
+                esac
+            fi
+        fi
+    fi
 
     while IFS= read -r line <&7; do
         stripped="${line#"${line%%[![:space:]]*}"}"
@@ -1075,6 +1155,10 @@ configure_from_example() {
         fi
         seen_keys[$key]=1
 
+        if [[ "$container_nr" =~ ^[2-5]$ ]] && [[ "$key" == *_PUBLISH_PORT ]]; then
+            default="$(project_publish_port "$default" "$container_nr")"
+        fi
+
         if [ -n "$field_when" ]; then
             condition_key="${field_when%%=*}"
             condition_value="$(normalize_rule_value "${field_when#*=}")"
@@ -1094,6 +1178,12 @@ configure_from_example() {
                 echo "    $key= blank"
                 continue
             fi
+        fi
+
+        if [ "$container_nr" = "TUN" ] && [[ "$key" == *_PUBLISH_PORT ]]; then
+            write_config_value "$target" "$key" ""
+            echo "    $key= disabled by CONTAINER_NR=TUN"
+            continue
         fi
 
         if [[ -n "${skip_existing_keys[$key]+x}" ]]; then
@@ -1143,6 +1233,13 @@ configure_from_example() {
         fi
 
         while :; do
+            if [ "$publish_port_autofill" = "true" ] && [[ "$key" == *_PUBLISH_PORT ]]; then
+                val="$default"
+                used_prefill=true
+                read_status=0
+                echo "    $key=$val"
+                break
+            fi
             used_prefill=false
             read_status=0
             prompt_suffix=""
@@ -1251,6 +1348,13 @@ configure_from_example() {
             continue
         fi
         echo "$key=$val" >> "$target"
+        if [ "$key" = "CONTAINER_NR" ]; then
+            case "${val^^}" in
+                TUN) container_nr="TUN" ;;
+                [2-5]) container_nr="$val" ;;
+                *) container_nr="" ;;
+            esac
+        fi
         maybe_apply_value_dupe "$key" "$val"
         maybe_apply_reverse_varname "$base_key" "$val"
         activate_blank_rules "$key" "$val"
@@ -1366,7 +1470,11 @@ generate_container_files() {
     local -a named_volumes=()
     local -a persistent_envs=()
     local -a additional_lines=()
-    local item source
+    local item source container_nr_value
+    local tunnel_only=false
+
+    container_nr_value="$(config_value CONTAINER_NR || true)"
+    [ "${container_nr_value^^}" = "TUN" ] && tunnel_only=true
 
     host_key="$(publish_host_key || true)"
     if [ -n "$host_key" ]; then
@@ -1434,6 +1542,8 @@ generate_container_files() {
             fi
 
             if [[ "$key" == *_PUBLISH_PORT ]]; then
+                [ "$tunnel_only" = "true" ] && continue
+                case "${value,,}" in ""|blank|null) continue ;; esac
                 prefix="${key%_PUBLISH_PORT}"
                 internal_key="${prefix}_PORT"
                 internal_port="$(config_value "$internal_key" || true)"
@@ -1484,7 +1594,7 @@ generate_container_files() {
     add_sqlite_volume_mounts
     add_optional_persistence_mounts
 
-    if [ "${#ports[@]}" -eq 0 ] && [ -n "$first_port" ]; then
+    if [ "$tunnel_only" != "true" ] && [ "${#ports[@]}" -eq 0 ] && [ -n "$first_port" ]; then
         add_unique "${host}:${first_port}:${first_port}" ports
     fi
 
