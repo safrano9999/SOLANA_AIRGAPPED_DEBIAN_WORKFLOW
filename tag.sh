@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-tag="${TAG:-$(date +%Y.%-m.%-d)}"
 remote="${REMOTE:-origin}"
+latest_tag="latest"
 
 auth_declined() {
   local provider="${1%%.*}"
@@ -112,17 +112,51 @@ ensure_registry_auth() {
 
 repo_root="$(git rev-parse --show-toplevel)"
 tag_preferences="$repo_root/.tag"
+month_prefix="$(date +%Y.%-m)"
+
+monthly_tag() {
+  local mode="$1"
+  local refs ref suffix number
+  local highest=0
+
+  refs="$(git ls-remote --tags --refs "$remote" "refs/tags/${month_prefix}.*")"
+  while read -r _ ref; do
+    suffix="${ref#refs/tags/${month_prefix}.}"
+    [[ "$suffix" =~ ^[0-9]+$ ]] || continue
+    number=$((10#$suffix))
+    ((number > highest)) && highest="$number"
+  done <<< "$refs"
+
+  if [ "$mode" = check ] && ((highest > 0)); then
+    printf '%s.%d\n' "$month_prefix" "$highest"
+  else
+    printf '%s.%d\n' "$month_prefix" "$((highest + 1))"
+  fi
+}
+
+ensure_github_auth
+if [ -n "${TAG:-}" ]; then
+  tag="$TAG"
+elif [ "${1:-}" = "--check" ]; then
+  tag="$(monthly_tag check)"
+else
+  tag="$(monthly_tag next)"
+fi
+
+[ "$tag" != "$latest_tag" ] || { echo "$latest_tag is reserved for the moving tag" >&2; exit 2; }
 if [ "${1:-}" = "--check" ]; then
   set -x
   gh run list --branch "$tag" --limit 1
   exit 0
 fi
 
-ensure_github_auth
 ensure_registry_auth "docker.io" "DOCKERHUB_USERNAME" "DOCKERHUB_TOKEN"
 ensure_registry_auth "quay.io" "QUAY_USERNAME" "QUAY_TOKEN"
 
 git tag -d "$tag" 2>/dev/null || true
-git push "$remote" ":refs/tags/$tag" 2>/dev/null || true
 git tag "$tag"
-git push "$remote" "$tag"
+git tag -f "$latest_tag"
+git push --atomic "$remote" \
+  "refs/tags/$tag:refs/tags/$tag" \
+  "+refs/tags/$latest_tag:refs/tags/$latest_tag"
+printf 'Tagged %s and moved %s to %s\n' "$tag" "$latest_tag" "$(git rev-parse --short HEAD)"
