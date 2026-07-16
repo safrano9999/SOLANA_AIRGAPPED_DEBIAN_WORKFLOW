@@ -582,6 +582,7 @@ configure_from_example() {
     declare -A repeat_group_fields=()
     declare -A repeat_key_groups=()
     declare -A repeat_optional_complete=()
+    declare -A repeat_freeform=()
     declare -A db_defaults=()
     declare -A db_seen_keys=()
     local -a db_config_keys=()
@@ -633,6 +634,14 @@ configure_from_example() {
             for target_key in $directive; do
                 [[ "$target_key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || continue
                 repeat_optional_complete[$target_key]=1
+            done
+            continue
+        fi
+        if [[ "$stripped" == \#repeat-freeform:* ]]; then
+            directive="$(trim "${stripped#\#repeat-freeform:}")"
+            for target_key in $directive; do
+                [[ "$target_key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || continue
+                repeat_freeform[$target_key]=1
             done
             continue
         fi
@@ -1148,6 +1157,10 @@ configure_from_example() {
             repeat_suffix=""
             [ "$repeat_index" -eq 1 ] || printf -v repeat_suffix '_%02d' "$repeat_index"
             default="${default//\$\{REPEAT_SUFFIX\}/$repeat_suffix}"
+            if [ "$repeat_index" -gt 1 ] && [[ -n "${repeat_freeform[$base_key]+x}" ]]; then
+                default=""
+                field_choices=""
+            fi
         fi
         if [[ -n "${seen_keys[$key]+x}" ]]; then
             echo "    duplicate $key in $(basename "$example")" >&2
