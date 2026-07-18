@@ -1026,8 +1026,9 @@ configure_from_example() {
         if [ -t 0 ]; then
             echo "    DISPLAY:"
             echo "      (1) autodetect GUI env"
-            echo "      (2) enter manual"
-            read -r -p "    Choose [1/2] (default: 1): " choice || read_status=$?
+            echo "      (2) headless"
+            echo "      (3) enter manual"
+            read -r -p "    Choose [1/2/3] (default: 1): " choice || read_status=$?
             choice="${choice:-1}"
         else
             choice="1"
@@ -1044,6 +1045,11 @@ configure_from_example() {
                 done < <(detect_gui_env_values || true)
                 ;;
             2)
+                display_val=""
+                no_at_bridge_val="1"
+                runtime_val="/tmp/runtime-root"
+                ;;
+            3)
                 if [ -t 0 ]; then
                     read -e -i "$display_val" -r -p "    DISPLAY: " val || read_status=$?
                     [ -n "$val" ] && display_val="$val"
@@ -1054,12 +1060,11 @@ configure_from_example() {
                 fi
                 ;;
             *)
-                echo "    choose 1 or 2"
+                echo "    choose 1, 2 or 3"
                 return 1
                 ;;
         esac
 
-        [ -n "$display_val" ] || display_val=":0"
         [ -n "$no_at_bridge_val" ] || no_at_bridge_val="1"
         [ -n "$runtime_val" ] || runtime_val="/tmp/runtime-root"
 
