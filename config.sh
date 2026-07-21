@@ -789,6 +789,10 @@ configure_from_example() {
                 db_bulk_eligible=false
                 break
             fi
+            if find_configured_value_elsewhere "$target" "$key" && [ -n "$OTHER_VALUE" ]; then
+                db_bulk_eligible=false
+                break
+            fi
         done
     fi
 
@@ -934,7 +938,7 @@ configure_from_example() {
         local db_key prefix suffix value default_name
 
         selected_backend="$(normalize_db_backend "$selected_backend")"
-        if [ "$selected_backend" = "sqlite" ]; then
+        if [ "$selected_backend" = "sqlite" ] || [ "$selected_backend" = "on_the_fly" ]; then
             for db_key in "${db_config_keys[@]}"; do
                 if [[ "$db_key" == *_DB_BACKEND ]]; then
                     write_config_value "$target" "$db_key" "$selected_backend"
@@ -942,7 +946,11 @@ configure_from_example() {
                     write_config_value "$target" "$db_key" "blank"
                 fi
             done
-            echo "    ${#db_backend_keys[@]} backends configured as sqlite in ./sqlite"
+            if [ "$selected_backend" = "sqlite" ]; then
+                echo "    ${#db_backend_keys[@]} backends configured as sqlite in ./sqlite"
+            else
+                echo "    ${#db_backend_keys[@]} backends configured as on_the_fly"
+            fi
             return 0
         fi
 
@@ -986,7 +994,7 @@ configure_from_example() {
         [ "$db_bulk_decided" = "false" ] || return 1
         selected_backend="$(normalize_db_backend "$selected_backend")"
         case "$selected_backend" in
-            sqlite|postgres|mysql|mariadb) ;;
+            on_the_fly|sqlite|postgres|mysql|mariadb) ;;
             *) return 1 ;;
         esac
         db_bulk_decided=true
