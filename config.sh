@@ -1181,49 +1181,30 @@ configure_from_example() {
         local action token discovered
 
         case "${current,,}" in ""|blank|null) current="" ;; esac
+        if [ -n "$current" ]; then
+            write_config_value "$output" "$chat_key" "$current"
+            echo "    $chat_key= exists"
+            return 0
+        fi
         if [ ! -t 0 ]; then
             write_config_value "$output" "$chat_key" "$current"
-            if [ -n "$current" ]; then
-                echo "    $chat_key= reused"
-            else
-                echo "    $chat_key= skipped"
-            fi
+            echo "    $chat_key= skipped"
             return 0
         fi
 
         while :; do
             echo "    $chat_key:"
-            if [ -n "$current" ]; then
-                echo "      (1) use same again: $current"
-                echo "      (2) enter"
-                echo "      (3) skip"
-                echo "      (4) discover via /start"
-                read -r -p "    Choose [1/2/3/4] (default: 1): " action || return 130
-                action="${action:-1}"
-                case "${action,,}" in
-                    1|same|reuse)
-                        write_config_value "$output" "$chat_key" "$current"
-                        echo "    $chat_key= reused"
-                        return 0
-                        ;;
-                    2|enter) action="enter" ;;
-                    3|skip) action="skip" ;;
-                    4|discover) action="discover" ;;
-                    *) echo "    choose 1, 2, 3 or 4"; continue ;;
-                esac
-            else
-                echo "      (1) enter"
-                echo "      (2) skip"
-                echo "      (3) discover via /start"
-                read -r -p "    Choose [1/2/3] (default: 2): " action || return 130
-                action="${action:-2}"
-                case "${action,,}" in
-                    1|enter) action="enter" ;;
-                    2|skip) action="skip" ;;
-                    3|discover) action="discover" ;;
-                    *) echo "    choose 1, 2 or 3"; continue ;;
-                esac
-            fi
+            echo "      (1) enter"
+            echo "      (2) skip"
+            echo "      (3) discover via /start"
+            read -r -p "    Choose [1/2/3] (default: 2): " action || return 130
+            action="${action:-2}"
+            case "${action,,}" in
+                1|enter) action="enter" ;;
+                2|skip) action="skip" ;;
+                3|discover) action="discover" ;;
+                *) echo "    choose 1, 2 or 3"; continue ;;
+            esac
 
             case "$action" in
                 enter)
