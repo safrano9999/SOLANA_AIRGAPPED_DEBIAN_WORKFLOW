@@ -22,6 +22,7 @@ NO_CONTAINER=false
 
 declare -A REPEAT_GROUP_MODES=()
 declare -A REPEAT_GROUP_INDEXES=()
+declare -A TELEGRAM_CHAT_HANDLED=()
 
 for arg in "$@"; do
     case "$arg" in
@@ -279,6 +280,95 @@ write_config_value() {
 
     sed -i "/^${key}=/d" "$target" 2>/dev/null || true
     echo "$key=$value" >> "$target"
+}
+
+discover_telegram_chat_id() {
+    local token="$1"
+
+    command -v python3 >/dev/null || {
+        echo "    Telegram discovery requires python3" >&2
+        return 1
+    }
+    TELEGRAM_DISCOVERY_TOKEN="$token" python3 - <<'PY'
+import json
+import os
+import sys
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+
+
+token = os.environ["TELEGRAM_DISCOVERY_TOKEN"]
+base_url = os.environ.get("TELEGRAM_BOT_API_BASE", "https://api.telegram.org").rstrip("/")
+try:
+    discovery_timeout = max(1, int(os.environ.get("TELEGRAM_DISCOVERY_TIMEOUT_SECONDS", "120")))
+except ValueError:
+    print("    TELEGRAM_DISCOVERY_TIMEOUT_SECONDS must be an integer", file=sys.stderr)
+    raise SystemExit(1)
+
+
+def telegram(method, values=None):
+    encoded = urllib.parse.urlencode(values or {}).encode()
+    url = f"{base_url}/bot{urllib.parse.quote(token, safe=':')}/{method}"
+    request = urllib.request.Request(url, data=encoded, method="POST")
+    try:
+        with urllib.request.urlopen(request, timeout=25) as response:
+            payload = json.load(response)
+    except urllib.error.HTTPError as error:
+        try:
+            failure = json.load(error)
+            description = failure.get("description") if isinstance(failure, dict) else None
+        except (OSError, ValueError):
+            description = None
+        raise RuntimeError(description or f"Telegram API returned HTTP {error.code}") from error
+    except (OSError, ValueError) as error:
+        raise RuntimeError(f"Telegram request failed ({type(error).__name__})") from error
+    if not isinstance(payload, dict):
+        raise RuntimeError("Telegram API returned an invalid response")
+    if not payload.get("ok"):
+        raise RuntimeError(payload.get("description") or "Telegram API rejected the request")
+    return payload.get("result")
+
+
+try:
+    identity = telegram("getMe")
+    username = identity.get("username") if isinstance(identity, dict) else None
+    old_updates = telegram("getUpdates", {"timeout": 0, "allowed_updates": '["message"]'})
+    offset = 0
+    if isinstance(old_updates, list) and old_updates:
+        offset = max(int(update.get("update_id", 0)) for update in old_updates) + 1
+
+    destination = f"@{username}" if username else "the Telegram bot"
+    print(f"    Send /start to {destination}; waiting up to {discovery_timeout}s ...", file=sys.stderr)
+    deadline = time.monotonic() + discovery_timeout
+    while time.monotonic() < deadline:
+        remaining = max(1, int(deadline - time.monotonic()))
+        updates = telegram(
+            "getUpdates",
+            {
+                "offset": offset,
+                "timeout": min(20, remaining),
+                "allowed_updates": '["message"]',
+            },
+        )
+        if not isinstance(updates, list):
+            continue
+        for update in updates:
+            offset = max(offset, int(update.get("update_id", 0)) + 1)
+            message = update.get("message") or {}
+            command = str(message.get("text") or "").split(maxsplit=1)[0].split("@", 1)[0]
+            chat = message.get("chat") or {}
+            if command == "/start" and chat.get("id") is not None:
+                print(chat["id"])
+                raise SystemExit(0)
+except (RuntimeError, TypeError, ValueError) as error:
+    print(f"    Telegram discovery failed: {error}", file=sys.stderr)
+    raise SystemExit(1)
+
+print("    Telegram discovery timed out", file=sys.stderr)
+raise SystemExit(1)
+PY
 }
 
 write_config_value_if_missing() {
@@ -592,8 +682,9 @@ configure_from_example() {
     local directive condition condition_key condition_value target_key target_list secret
     local repeat_group repeat_style repeat_fields base_key repeat_choice repeat_index repeat_suffix
     local pending_value_dupe="" pending_reverse_varname="" value_dupe_target value_dupe_existing value_dupe_choice
-    local pending_choices="" pending_when="" pending_when_not="" pending_default_rules=""
-    local field_choices="" field_when="" field_when_not="" field_default_rules=""
+    local pending_choices="" pending_when="" pending_when_not="" pending_default_rules="" pending_telegram_token=""
+    local field_choices="" field_when="" field_when_not="" field_default_rules="" field_telegram_token=""
+    local telegram_token_key="" telegram_existing=""
     local generator_label choice
     local rule_key db_bulk_eligible=false db_bulk_decided=false
     local container_nr="" publish_port_count=0 publish_port_choice="" publish_port_autofill=false
@@ -1082,6 +1173,89 @@ configure_from_example() {
         return "$read_status"
     }
 
+    configure_telegram_chat_id() {
+        local output="$1"
+        local chat_key="$2"
+        local token_key="$3"
+        local current="$4"
+        local action token discovered
+
+        case "${current,,}" in ""|blank|null) current="" ;; esac
+        if [ ! -t 0 ]; then
+            write_config_value "$output" "$chat_key" "$current"
+            if [ -n "$current" ]; then
+                echo "    $chat_key= reused"
+            else
+                echo "    $chat_key= skipped"
+            fi
+            return 0
+        fi
+
+        while :; do
+            echo "    $chat_key:"
+            if [ -n "$current" ]; then
+                echo "      (1) use same again: $current"
+                echo "      (2) enter"
+                echo "      (3) skip"
+                echo "      (4) discover via /start"
+                read -r -p "    Choose [1/2/3/4] (default: 1): " action || return 130
+                action="${action:-1}"
+                case "${action,,}" in
+                    1|same|reuse)
+                        write_config_value "$output" "$chat_key" "$current"
+                        echo "    $chat_key= reused"
+                        return 0
+                        ;;
+                    2|enter) action="enter" ;;
+                    3|skip) action="skip" ;;
+                    4|discover) action="discover" ;;
+                    *) echo "    choose 1, 2, 3 or 4"; continue ;;
+                esac
+            else
+                echo "      (1) enter"
+                echo "      (2) skip"
+                echo "      (3) discover via /start"
+                read -r -p "    Choose [1/2/3] (default: 2): " action || return 130
+                action="${action:-2}"
+                case "${action,,}" in
+                    1|enter) action="enter" ;;
+                    2|skip) action="skip" ;;
+                    3|discover) action="discover" ;;
+                    *) echo "    choose 1, 2 or 3"; continue ;;
+                esac
+            fi
+
+            case "$action" in
+                enter)
+                    read -r -p "    $chat_key: " discovered || return 130
+                    discovered="$(trim "$discovered")"
+                    [ -n "$discovered" ] || { echo "    chat ID must not be empty"; continue; }
+                    write_config_value "$output" "$chat_key" "$discovered"
+                    echo "    $chat_key= set"
+                    return 0
+                    ;;
+                skip)
+                    write_config_value "$output" "$chat_key" ""
+                    echo "    $chat_key= skipped"
+                    return 0
+                    ;;
+                discover)
+                    token="$(config_value "$token_key" || true)"
+                    case "${token,,}" in ""|blank|null) token="" ;; esac
+                    if [ -z "$token" ]; then
+                        echo "    $token_key is empty; enter its bot token first"
+                        continue
+                    fi
+                    if discovered="$(discover_telegram_chat_id "$token")"; then
+                        write_config_value "$output" "$chat_key" "$discovered"
+                        echo "    $chat_key= discovered"
+                        return 0
+                    fi
+                    ;;
+            esac
+        done
+    }
+
     while IFS= read -r line <&3; do
         stripped="${line#"${line%%[![:space:]]*}"}"
         if [[ "$stripped" == \#choices:* ]]; then
@@ -1100,6 +1274,14 @@ configure_from_example() {
             pending_default_rules+="$(trim "${stripped#\#default-if:}")"$'\n'
             continue
         fi
+        if [[ "$stripped" == \#discover-telegram-chat:* ]]; then
+            pending_telegram_token="$(trim "${stripped#\#discover-telegram-chat:}")"
+            if [[ ! "$pending_telegram_token" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
+                echo "    invalid Telegram token variable: $pending_telegram_token" >&2
+                return 1
+            fi
+            continue
+        fi
         if [[ "$stripped" == \#required:* ]]; then
             required_next=true
             continue
@@ -1115,6 +1297,7 @@ configure_from_example() {
             pending_when=""
             pending_when_not=""
             pending_default_rules=""
+            pending_telegram_token=""
             continue
         fi
         if [[ "$stripped" == \#* ]]; then
@@ -1126,12 +1309,14 @@ configure_from_example() {
         field_when="$pending_when"
         field_when_not="$pending_when_not"
         field_default_rules="$pending_default_rules"
+        field_telegram_token="$pending_telegram_token"
         required_next=false
         secret_next=false
         pending_choices=""
         pending_when=""
         pending_when_not=""
         pending_default_rules=""
+        pending_telegram_token=""
 
         entry="${line%%#*}"
         entry="${entry#"${entry%%[![:space:]]*}"}"
@@ -1161,6 +1346,7 @@ configure_from_example() {
         [[ "$key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || continue
         base_key="$key"
         repeat_group="${repeat_key_groups[$base_key]:-}"
+        telegram_token_key="$field_telegram_token"
         if [ -n "$repeat_group" ]; then
             prepare_repeat_group "$repeat_group"
             [ "${REPEAT_GROUP_MODES[$repeat_group]}" = "new" ] || continue
@@ -1173,6 +1359,9 @@ configure_from_example() {
             if [ "$repeat_index" -gt 1 ] && [[ -n "${repeat_freeform[$base_key]+x}" ]]; then
                 default=""
                 field_choices=""
+            fi
+            if [ -n "$telegram_token_key" ] && [ "${repeat_key_groups[$telegram_token_key]:-}" = "$repeat_group" ]; then
+                telegram_token_key="$(repeat_group_key "$repeat_group" "$repeat_style" "$telegram_token_key" "$repeat_index")"
             fi
         fi
         if [[ -n "${seen_keys[$key]+x}" ]]; then
@@ -1228,6 +1417,21 @@ configure_from_example() {
         other_existing=false
         if find_configured_value_elsewhere "$target" "$key" && [ -n "$OTHER_VALUE" ]; then
             other_existing=true
+        fi
+        if [ -n "$telegram_token_key" ]; then
+            if [[ -n "${TELEGRAM_CHAT_HANDLED[$key]+x}" ]]; then
+                echo "    $key= already configured"
+                continue
+            fi
+            telegram_existing="$existing"
+            if [ -z "$telegram_existing" ] && [ "$other_existing" = "true" ]; then
+                telegram_existing="$OTHER_VALUE"
+            fi
+            configure_telegram_chat_id "$target" "$key" "$telegram_token_key" "$telegram_existing"
+            TELEGRAM_CHAT_HANDLED[$key]=1
+            val="$(read_kv_file "$target" "$key" || true)"
+            activate_blank_rules "$key" "$val"
+            continue
         fi
         if [ "$other_existing" = "true" ] && { [ -z "$existing_line" ] || [ -z "$existing" ]; }; then
             [ -z "$existing_line" ] || sed -i "/^${key}=/d" "$target" 2>/dev/null || true
