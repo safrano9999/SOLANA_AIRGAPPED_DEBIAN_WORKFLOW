@@ -19,6 +19,7 @@ BUILD_FILE="$DIR/build.conf"
 CONTAINER_NAME_MODE=false
 CONFIG_SHOW=""
 NO_CONTAINER=false
+RENDER_CONTAINER_ONLY=false
 
 declare -A REPEAT_GROUP_MODES=()
 declare -A REPEAT_GROUP_INDEXES=()
@@ -28,6 +29,7 @@ for arg in "$@"; do
     case "$arg" in
         --show) CONFIG_SHOW="--show" ;;
         --no-container) NO_CONTAINER=true ;;
+        --render-container) RENDER_CONTAINER_ONLY=true ;;
         *)
             echo "Unknown argument: $arg" >&2
             exit 2
@@ -1603,6 +1605,15 @@ project_image() {
     local configured
     upper_name="$(printf '%s' "$PROJECT_NAME" | tr '[:lower:]-' '[:upper:]_')"
 
+    configured="${CONFIG_CONTAINER_IMAGE:-}"
+    if [ -n "$configured" ]; then
+        [[ "$configured" =~ ^[A-Za-z0-9][A-Za-z0-9._/@:-]*$ ]] || {
+            echo "Invalid CONFIG_CONTAINER_IMAGE: $configured" >&2
+            return 1
+        }
+        printf '%s\n' "$configured"
+        return 0
+    fi
     configured="$(config_value "${upper_name}_IMAGE" || true)"
     if [ -n "$configured" ]; then
         printf '%s\n' "$configured"
@@ -1927,6 +1938,15 @@ echo ""
 echo "  Configuring $PROJECT_NAME"
 
 configure_container_name
+if $RENDER_CONTAINER_ONLY; then
+    [ "$NO_CONTAINER" != "true" ] || {
+        echo "--render-container cannot be combined with --no-container" >&2
+        exit 2
+    }
+    generate_container_files
+    echo ""
+    exit 0
+fi
 if $CONTAINER_NAME_MODE; then
     touch "$CONFIG_FILE"
     write_config_value "$CONFIG_FILE" CONTAINER_NAME "$CONTAINER_NAME"
