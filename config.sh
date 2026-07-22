@@ -1651,6 +1651,25 @@ mount_if_source_files() {
     fi
 }
 
+container_command_mode() {
+    local source_file line stripped mode
+
+    while IFS= read -r source_file || [ -n "$source_file" ]; do
+        [ -f "$source_file" ] || continue
+        while IFS= read -r line || [ -n "$line" ]; do
+            stripped="$(trim "$line")"
+            [[ "$stripped" == \#container-command:* ]] || continue
+            mode="$(trim "${stripped#\#container-command:}")"
+            mode="${mode,,}"
+            case "$mode" in
+                auto|image) printf '%s\n' "$mode"; return 0 ;;
+                *) echo "Invalid #container-command mode: $mode" >&2; return 1 ;;
+            esac
+        done < "$source_file"
+    done < <(mount_if_source_files)
+    printf 'auto\n'
+}
+
 publish_host_key() {
     local source_file line stripped directive target_key
 
@@ -1692,7 +1711,7 @@ generate_container_files() {
     local -a named_volumes=()
     local -a persistent_envs=()
     local -a additional_lines=()
-    local item source container_nr_value
+    local item source container_nr_value command_mode
     local tunnel_only=false
 
     container_nr_value="$(config_value CONTAINER_NR || true)"
@@ -1706,6 +1725,7 @@ generate_container_files() {
     fi
     [ -n "$host" ] || host="127.0.0.1"
     image="$(project_image)"
+    command_mode="$(container_command_mode)"
     compose_file="$DIR/docker-compose.yml"
     $CONTAINER_NAME_MODE && compose_file="$DIR/$CONTAINER_NAME-compose.yml"
     quadlet_file="$DIR/$CONTAINER_NAME.container"
@@ -1863,7 +1883,7 @@ generate_container_files() {
             printf '    environment:\n'
             for item in "${persistent_envs[@]}"; do printf '      - "%s"\n' "$item"; done
         fi
-        if [ -f "$DIR/webui.py" ]; then
+        if [ -f "$DIR/webui.py" ] && [ "$command_mode" = auto ]; then
             printf '    # Container-internal bind address; published host is controlled by config\n'
             printf '    command: uvicorn webui:app --host %s --port %s\n' "$command_host" "$first_port"
         fi
@@ -1908,7 +1928,7 @@ generate_container_files() {
         for item in "${persistent_envs[@]}"; do printf 'Environment=%s\n' "$item"; done
         [ "${#ports[@]}" -gt 0 ] && printf '# Port mappings: publish host:PUBLISH_PORT:PORT from config.conf/container.conf\n'
         for item in "${ports[@]}"; do printf 'PublishPort=%s\n' "$item"; done
-        if [ -f "$DIR/webui.py" ]; then
+        if [ -f "$DIR/webui.py" ] && [ "$command_mode" = auto ]; then
             printf '# Container-internal bind address; published host is controlled by config\n'
             printf 'Exec=uvicorn webui:app --host %s --port %s\n' "$command_host" "$first_port"
         fi
